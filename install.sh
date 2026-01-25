@@ -23,10 +23,13 @@ fi
 INSTALL_DIR="/opt/sing-box"
 
 if [[ -d "$INSTALL_DIR" ]]; then
-    echo "Updating existing installation..."
+    echo "Updating existing installation and migrating repo..."
     cd "$INSTALL_DIR"
+    git remote set-url origin https://github.com/tempizhere/uncut-core.git
     git fetch --all >/dev/null 2>&1
     git reset --hard origin/main >/dev/null 2>&1
+    # Cleanup old binary if exists
+    [[ -f "proxiii" ]] && rm "proxiii"
 else
     echo "Cloning repository..."
     git clone -q https://github.com/tempizhere/uncut-core.git "$INSTALL_DIR"
