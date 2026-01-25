@@ -1,0 +1,76 @@
+#!/bin/bash
+
+#############################################
+
+# Detect script location
+export SCRIPT_PATH=$(readlink -f "$0")
+export SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
+
+# Source Core
+source "$SCRIPT_DIR/core/utils.sh"
+source "$SCRIPT_DIR/core/config.sh"
+source "$SCRIPT_DIR/core/network.sh"
+source "$SCRIPT_DIR/core/menu.sh"
+
+# Source Modules
+source "$SCRIPT_DIR/modules/acme.sh"
+source "$SCRIPT_DIR/modules/nginx.sh"
+source "$SCRIPT_DIR/modules/singbox.sh"
+source "$SCRIPT_DIR/modules/protocols.sh"
+source "$SCRIPT_DIR/modules/users.sh"
+
+# Setup Trap
+trap 'echo -e "\n${YELLOW}Exiting...${NC}"; exit 0' INT TERM
+
+# Main entry point
+main() {
+    check_root
+    check_os
+    
+    # Initialize settings if missing
+    if [[ -d "$INSTALL_DIR" ]]; then
+        local salt=$(get_setting "protocol_salt")
+        if [[ -z "$salt" ]]; then
+            init_settings
+        fi
+    fi
+    
+    check_script_updates
+    
+    while true; do
+        show_menu
+        if ! read -p "Your choice: " choice; then
+            echo -e "\n${RED}Error: Cannot read input. Try running 'raw' directly.${NC}"
+            exit 1
+        fi
+        
+        case "$choice" in
+            1) install_singbox ;;
+            2) update_singbox ;;
+            3) uninstall_singbox ;;
+            4) add_client ;;
+            5) remove_client ;;
+            6) list_clients ;;
+            7) show_client_links ;;
+            8) add_protocol ;;
+            9) remove_protocol ;;
+            10) list_protocols ;;
+            11) change_sni ;;
+            12) show_status ;;
+            13) restart_service ;;
+            14) stop_service ;;
+            15) show_logs ;;
+            16) toggle_auto_update ;;
+            17) masking_settings_menu ;;
+            0) exit 0 ;;
+            *) [[ -n "$choice" ]] && print_error "Invalid choice" ;;
+        esac
+        
+        if [[ "$choice" != "0" ]]; then
+            echo ""
+            read -p "Press Enter to continue..."
+        fi
+    done
+}
+
+main "$@"

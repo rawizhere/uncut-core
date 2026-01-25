@@ -1,0 +1,82 @@
+# Map for pseudo-random Age header (based on msec)
+map $msec $cache_age {
+    ~0$ "0";
+    ~1$ "42";
+    ~2$ "87";
+    ~3$ "156";
+    ~4$ "203";
+    ~5$ "0";
+    ~6$ "91";
+    ~7$ "134";
+    ~8$ "267";
+    ~9$ "15";
+    default "0";
+}
+
+# HTTP server - serves images and proxies ACME challenges
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    # Redirect everything to HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS server - CDN masking
+server {
+    listen 443 ssl http2;
+    server_name ${DOMAIN};
+    server_tokens off;
+
+    # SSL certificates (managed by sing-box ACME)
+    ssl_certificate ${INSTALL_DIR}/certs/certificates/${DOMAIN}.crt;
+    ssl_certificate_key ${INSTALL_DIR}/certs/certificates/${DOMAIN}.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # CDN-like headers (base)
+    include /etc/nginx/snippets/cdn_headers.conf;
+
+    # CORS headers (common for CDN)
+    add_header Access-Control-Allow-Origin "*" always;
+    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+
+    # Subscriptions
+    location ~ "^/([a-f0-9]{32})$" {
+        include /etc/nginx/snippets/cdn_headers.conf;
+        alias /var/www/cdn/subs/$1;
+        default_type "application/octet-stream";
+        add_header Content-Disposition "inline";
+    }
+
+    # Images (with cache variation)
+    location /images/ {
+        include /etc/nginx/snippets/cdn_headers.conf;
+        root /var/www/cdn;
+        expires 30d;
+        add_header Cache-Control "public, immutable";
+        # Randomize cache status for realism
+        set $cache_type "Hit from cloudfront";
+        add_header X-Cache "$cache_type" always;
+        try_files $uri =404;
+    }
+
+    # Everything else -> 403 (S3 XML style) - MUST be last
+    location / {
+        include /etc/nginx/snippets/cdn_headers.conf;
+        add_header x-amz-request-id "$request_id" always;
+        default_type application/xml;
+        return 403 '<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+    <Code>AccessDenied</Code>
+    <Message>Access Denied</Message>
+    <RequestId>$request_id</RequestId>
+    <HostId>${HOST_ID}</HostId>
+</Error>';
+    }
+
+    # Dynamic Stealth Locations (Populated by Manager)
+    include ${INSTALL_DIR}/nginx_locations.conf;
+}

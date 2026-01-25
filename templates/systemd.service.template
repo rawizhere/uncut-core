@@ -1,0 +1,15 @@
+[Unit]
+Description=sing-box service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${INSTALL_DIR}/sing-box run -c ${CONFIG_FILE}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:${LOG_FILE}
+StandardError=append:${LOG_FILE}
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+[nginx-forbidden]
+enabled = true
+port = http,https
+filter = nginx-forbidden
+logpath = /var/log/nginx/access.log
+maxretry = 10
+findtime = 60
+bantime = 3600
+action = %(action_mwl)s

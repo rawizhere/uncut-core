@@ -1,0 +1,12 @@
+.DS_Store
+.vscode/
+.idea/
+*.log
+*.tmp
+*.swp
+
+# Local testing artifacts (if any)
+config.json
+settings.json
+clients.json
+sing-box
