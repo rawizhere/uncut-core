@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Uncut Core Installer
-# curl -fsSL https://raw.githubusercontent.com/tempizhere/uncut-core/main/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash
 
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'
@@ -25,14 +25,14 @@ INSTALL_DIR="/opt/sing-box"
 if [[ -d "$INSTALL_DIR" ]]; then
     echo "Updating existing installation and migrating repo..."
     cd "$INSTALL_DIR"
-    git remote set-url origin https://github.com/tempizhere/uncut-core.git
+    git remote set-url origin https://github.com/rawizhere/uncut-core.git
     git fetch --all >/dev/null 2>&1
     git reset --hard origin/main >/dev/null 2>&1
     # Cleanup old binary if exists
     [[ -f "proxiii" ]] && rm "proxiii"
 else
     echo "Cloning repository..."
-    git clone -q https://github.com/tempizhere/uncut-core.git "$INSTALL_DIR"
+    git clone -q https://github.com/rawizhere/uncut-core.git "$INSTALL_DIR"
 fi
 
 # Permissions

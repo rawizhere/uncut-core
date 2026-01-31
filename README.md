@@ -19,7 +19,7 @@ Server disguises as a CloudFront backend. Deep traffic masking (AWS/Google/Sentr
 ### Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tempizhere/uncut-core/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash
 ```
 
 ### Usage
