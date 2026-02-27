@@ -44,7 +44,10 @@ generate_xhttp_stealth_inbound() {
   "transport": {
     "type": "xhttp",
     "path": "$salted_path",
-    "mode": "auto"
+    "mode": "auto",
+    "x_padding_bytes": "100-1000",
+    "sc_max_buffered_posts": 30,
+    "sc_stream_up_server_secs": "20-80"
   }
 }
 EOF
@@ -126,7 +129,10 @@ generate_xhttp_inbound() {
   "transport": {
     "type": "xhttp",
     "path": "/",
-    "mode": "auto"
+    "mode": "auto",
+    "x_padding_bytes": "100-1000",
+    "sc_max_buffered_posts": 30,
+    "sc_stream_up_server_secs": "20-80"
   },
   "tls": {
     "enabled": true,
@@ -155,7 +161,10 @@ generate_xhttp_reality_inbound() {
   "transport": {
     "type": "xhttp",
     "path": "/",
-    "mode": "auto"
+    "mode": "auto",
+    "x_padding_bytes": "100-1000",
+    "sc_max_buffered_posts": 30,
+    "sc_stream_up_server_secs": "20-80"
   },
   "tls": {
     "enabled": true,

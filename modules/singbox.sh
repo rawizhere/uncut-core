@@ -2,6 +2,7 @@
 
 # Download sing-box
 download_singbox() {
+    local target_version=$1
     print_info "Detecting architecture..."
     local arch=$(uname -m)
     case $arch in
@@ -14,12 +15,21 @@ download_singbox() {
     esac
     print_success "Architecture: $arch"
 
-    print_info "Fetching latest sing-box extended version..."
-    local release_info=$(curl -s https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest)
-    local version=$(echo "$release_info" | jq -r .tag_name)
+    local release_info=""
+    local version=""
+    
+    if [[ -z "$target_version" ]]; then
+        print_info "Fetching latest sing-box extended version..."
+        release_info=$(curl -s https://api.github.com/repos/shtorm-7/sing-box-extended/releases/latest)
+        version=$(echo "$release_info" | jq -r .tag_name)
+    else
+        print_info "Fetching info for version $target_version..."
+        release_info=$(curl -s "https://api.github.com/repos/shtorm-7/sing-box-extended/releases/tags/${target_version}")
+        version="$target_version"
+    fi
     
     if [[ -z "$version" ]] || [[ "$version" == "null" ]]; then
-        print_error "Failed to fetch sing-box version"
+        print_error "Failed to fetch sing-box version info"
         exit 1
     fi
     print_success "Version: $version"
@@ -169,12 +179,31 @@ EOF
     fi
     print_success "Logrotate configured"
 }
+fix_sshd_runtime() {
+    # Fix for missing /run/sshd after reboot on Ubuntu 24.04+
+    local tmpfile_conf="/etc/tmpfiles.d/sshd.conf"
+    if [[ ! -f "$tmpfile_conf" ]]; then
+        print_info "Applying /run/sshd persistence fix..."
+        echo "d /run/sshd 0755 root root -" > "$tmpfile_conf"
+        mkdir -p /run/sshd
+        chmod 0755 /run/sshd
+        
+        # Aggressively disable ssh.socket to prevent port conflicts on Ubuntu 24.04+
+        if systemctl is-active --quiet ssh.socket || systemctl is-enabled --quiet ssh.socket 2>/dev/null; then
+            systemctl stop ssh.socket >/dev/null 2>&1
+            systemctl disable ssh.socket >/dev/null 2>&1
+            systemctl mask ssh.socket >/dev/null 2>&1
+        fi
+        print_success "SSHD runtime fix applied"
+    fi
+}
+
 
 install_dependencies() {
     print_info "Installing dependencies..."
-    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq
     # Install all required packages including dnsutils for dig command
-    if ! apt-get install -y curl jq openssl socat nginx gettext-base dnsutils; then
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" curl jq openssl socat nginx gettext-base dnsutils; then
         print_error "Failed to install dependencies. Please check your internet connection or apt-get logs."
         exit 1
     fi
@@ -230,6 +259,7 @@ install_singbox() {
     echo ""
     
     # Pre-flight checks
+    fix_sshd_runtime
     print_info "Running pre-flight checks..."
     if ! check_ports_available; then
         print_error "Installation cancelled due to port conflicts"
@@ -367,10 +397,37 @@ update_singbox() {
     fi
     
     # System update
+    fix_sshd_runtime
+    
+    # Temporarily stop fail2ban to prevent accidental bans during service restarts
+    local f2b_was_active=false
+    if systemctl is-active --quiet fail2ban; then
+        print_info "Temporarily stopping Fail2ban..."
+        systemctl stop fail2ban
+        f2b_was_active=true
+    fi
+
+    # Suppress needrestart and other interactive prompts
+    export NEEDRESTART_MODE=a
+    export DEBIAN_FRONTEND=noninteractive
+    
+    # Try to detect SSH port if not saved
+    local ssh_port=$(get_setting "ssh_port")
+    if [[ -z "$ssh_port" ]]; then
+        ssh_port=$(grep "^Port " /etc/ssh/sshd_config | awk '{print $2}')
+        ssh_port=${ssh_port:-22}
+        set_setting "ssh_port" "$ssh_port"
+    fi
+    
+    # Ensure SSH port is allowed in UFW before we do anything risky
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow "$ssh_port"/tcp >/dev/null 2>&1
+    fi
+
     print_info "Updating packages..."
     apt-get update > /dev/null 2>&1
-    apt-get upgrade -y nginx > /dev/null 2>&1
-    
+    apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" nginx > /dev/null 2>&1
+
     # sing-box update
     if [[ "$current_version" != "$latest_version" || "$force" == "y" ]]; then
         print_info "Downloading sing-box $latest_version..."
@@ -381,29 +438,34 @@ update_singbox() {
     
     print_info "Restarting services..."
     
-    # Re-apply Nginx config to ensure latest changes
+    # Re-apply Nginx config
     local domain=$(get_setting "domain")
     if [[ -n "$domain" ]]; then
         setup_nginx_cdn "$domain"
-        
-        # Regenerate subscriptions (in case hash format changed)
         regenerate_all_subscriptions
     fi
     
-    print_info "Restarting Nginx..."
-    if systemctl restart nginx; then
-        print_success "Nginx restarted"
-    else
-        print_error "Nginx restart failed! Check: nginx -t"
-    fi
-    systemctl restart sing-box
-    sleep 2
+    print_info "Rebuilding sing-box config..."
+    rebuild_config
     
-    if systemctl is-active --quiet sing-box; then
-        print_success "Update completed"
-        echo "Sing-box: $("$INSTALL_DIR"/sing-box version | head -n1)"
+    # Use reload-or-restart for better stability
+    print_info "Restarting Sing-box..."
+    if systemctl reload-or-restart sing-box; then
+        sleep 2
+        if systemctl is-active --quiet sing-box; then
+            print_success "Update completed"
+            echo "Sing-box: $("$INSTALL_DIR"/sing-box version | head -n1)"
+        else
+            print_error "sing-box launch error! Check logs."
+        fi
     else
-        print_error "sing-box launch error! Check logs."
+        print_error "Failed to restart sing-box"
+    fi
+
+    # Restart fail2ban if it was running
+    if [[ "$f2b_was_active" == "true" ]]; then
+        print_info "Restarting Fail2ban..."
+        systemctl start fail2ban
     fi
     echo ""
 }
@@ -594,6 +656,101 @@ show_logs() {
             ;;
     esac
     
+    echo ""
+}
+
+change_singbox_version() {
+    echo ""
+    echo "=== Change Sing-box Version ==="
+    echo ""
+    
+    local current_version=$("$INSTALL_DIR/sing-box" version 2>/dev/null | head -n1 | awk '{print $3}')
+    print_info "Current version: ${current_version:-unknown}"
+    
+    print_info "Fetching recent 5 releases..."
+    local releases_json=$(curl -s https://api.github.com/repos/shtorm-7/sing-box-extended/releases)
+    local releases=$(echo "$releases_json" | jq -r '.[0:5] | .[].tag_name')
+    
+    if [[ -z "$releases" ]] || [[ "$releases" == "null" ]]; then
+        print_error "Failed to fetch releases from GitHub"
+        return
+    fi
+    
+    local versions=()
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            versions+=("$line")
+        fi
+    done <<< "$releases"
+    
+    if [[ ${#versions[@]} -eq 0 ]]; then
+        print_error "No versions found"
+        return
+    fi
+    
+    echo "Available versions:"
+    for i in "${!versions[@]}"; do
+        if [[ "${versions[$i]}" == "$current_version" ]]; then
+            echo "$((i+1))) ${versions[$i]} (Current)"
+        else
+            echo "$((i+1))) ${versions[$i]}"
+        fi
+    done
+    echo "0) Cancel"
+    echo ""
+    
+    read -p "Select version to install: " choice
+    
+    if [[ "$choice" == "0" ]]; then
+        return
+    fi
+    
+    if ! [[ "$choice" =~ ^[1-5]$ ]]; then
+        print_error "Invalid choice"
+        return
+    fi
+    
+    local index=$((choice - 1))
+    if [[ $index -ge ${#versions[@]} ]]; then
+        print_error "Invalid choice"
+        return
+    fi
+    
+    local target_version="${versions[$index]}"
+    
+    if [[ "$target_version" == "$current_version" ]]; then
+        print_success "Version $target_version is already installed!"
+        read -p "Force reinstall anyway? y/n: " force
+        if [[ "$force" != "y" ]]; then
+            return
+        fi
+    fi
+    
+    read -p "Install version $target_version? y/n: " confirm
+    if [[ "$confirm" != "y" ]]; then
+        print_info "Cancelled"
+        return
+    fi
+    
+    print_info "Stopping sing-box..."
+    systemctl stop sing-box
+    
+    print_info "Downloading sing-box $target_version..."
+    download_singbox "$target_version"
+    
+    print_info "Rebuilding config for compatibility..."
+    rebuild_config
+    
+    print_info "Restarting sing-box..."
+    systemctl restart sing-box
+    sleep 2
+    
+    if systemctl is-active --quiet sing-box; then
+        print_success "Version changed successfully!"
+        echo "Sing-box: $("$INSTALL_DIR"/sing-box version | head -n1)"
+    else
+        print_error "sing-box launch error! Check logs."
+    fi
     echo ""
 }
 

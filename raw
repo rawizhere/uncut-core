@@ -18,6 +18,7 @@ source "$SCRIPT_DIR/modules/nginx.sh"
 source "$SCRIPT_DIR/modules/singbox.sh"
 source "$SCRIPT_DIR/modules/protocols.sh"
 source "$SCRIPT_DIR/modules/users.sh"
+source "$SCRIPT_DIR/modules/mtproto.sh"
 
 # Setup Trap
 trap 'echo -e "\n${YELLOW}Exiting...${NC}"; exit 0' INT TERM
@@ -62,6 +63,8 @@ main() {
             15) show_logs ;;
             16) toggle_auto_update ;;
             17) masking_settings_menu ;;
+            18) change_singbox_version ;;
+            19) mtproto_menu ;;
             0) exit 0 ;;
             *) [[ -n "$choice" ]] && print_error "Invalid choice" ;;
         esac

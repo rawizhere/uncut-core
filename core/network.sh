@@ -148,11 +148,24 @@ setup_firewall() {
     ufw allow 52143/tcp comment 'HTTP Proxy' > /dev/null 2>&1
     ufw allow 52144/tcp comment 'SOCKS Proxy' > /dev/null 2>&1
     
+    # Allow MTProto if installed
+    local mtg_port=$(get_setting "mtg_port")
+    if [[ -n "$mtg_port" ]]; then
+        ufw allow "${mtg_port}/tcp" comment 'MTProto' > /dev/null 2>&1
+    fi
+    
     # Enable firewall
     ufw --force enable > /dev/null 2>&1
     
+    # Save SSH port to settings for future updates
+    set_setting "ssh_port" "$ssh_port"
+    
     print_success "Firewall configured"
-    echo "Open ports: ${ssh_port}(SSH), 80, 443, 2053, 2083, 8443(TCP/UDP), 8550(UDP), 52143, 52144"
+    local open_ports="${ssh_port}(SSH), 80, 443, 2053, 2083, 8443(TCP/UDP), 8550(UDP), 52143, 52144"
+    if [[ -n "$mtg_port" ]]; then
+        open_ports+=", ${mtg_port}(MTProto)"
+    fi
+    echo "Open ports: $open_ports"
     
     # Install and configure Fail2ban for SSH protection
     setup_fail2ban
