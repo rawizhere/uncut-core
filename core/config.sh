@@ -99,7 +99,8 @@ set_setting() {
 add_protocol_to_settings() {
     local protocol=$1
     local tmp=$(mktemp)
-    jq --arg proto "$protocol" '.protocols += [$proto] | .protocols |= unique' "$SETTINGS_FILE" > "$tmp"
+    # Ensure protocol is split by space if accidentally passed as one string
+    jq --arg proto "$protocol" '.protocols += ($proto | split(" ")) | .protocols |= (flatten | map(select(. != "")) | unique)' "$SETTINGS_FILE" > "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
 }
 
@@ -107,13 +108,21 @@ add_protocol_to_settings() {
 remove_protocol_from_settings() {
     local protocol=$1
     local tmp=$(mktemp)
+    # Remove from settings
     jq --arg proto "$protocol" '.protocols -= [$proto]' "$SETTINGS_FILE" > "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
+    
+    # Remove from all clients
+    if [[ -f "$CLIENTS_FILE" ]]; then
+        local ctmp=$(mktemp)
+        jq --arg proto "$protocol" 'map(.protocols -= [$proto])' "$CLIENTS_FILE" > "$ctmp"
+        mv "$ctmp" "$CLIENTS_FILE"
+    fi
 }
 
 # Get protocol list
 get_protocols() {
-    jq -r '.protocols[]' "$SETTINGS_FILE" 2>/dev/null
+    jq -r '.protocols? // [] | map(split(" ")) | flatten | map(select(. != "")) | .[]' "$SETTINGS_FILE" 2>/dev/null | sort -u
 }
 
 # Check if protocol exists

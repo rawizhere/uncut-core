@@ -4,6 +4,8 @@
 *.log
 *.tmp
 *.swp
+.agent/
+docs/
 
 # Local testing artifacts (if any)
 config.json

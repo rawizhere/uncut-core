@@ -43,6 +43,7 @@ show_menu() {
     echo " 17) Masking preset"
     echo " 18) Change sing-box version"
     echo " 19) MTProto"
+    echo " 20) Edit Client"
     echo ""
     echo " 0) Exit"
     echo "------------------------------------------------------------"

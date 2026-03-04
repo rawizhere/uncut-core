@@ -2,7 +2,7 @@
 
 # Configuration generators for Inbounds
 generate_vless_ws_inbound() {
-    local users=$(jq -c '[.[] | {uuid: .uuid}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "vless-ws") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
     local primary_path_raw=$(echo "$paths_str" | cut -d',' -f1)
@@ -26,7 +26,7 @@ EOF
 }
 
 generate_xhttp_stealth_inbound() {
-    local users=$(jq -c '[.[] | {uuid: .uuid}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp-stealth") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
     local mode=$(echo "$theme_data" | awk -F'|' '{print $3}' | cut -d':' -f2)
@@ -59,7 +59,7 @@ generate_vless_reality_inbound() {
     local short_id=$(get_setting "reality_short_id")
     
     # Get client list
-    local users=$(jq -c '[.[] | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "vless-reality") | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -91,7 +91,7 @@ generate_hysteria2_inbound() {
     local obfs_password=$(get_setting "hysteria_obfs_password")
     
     # Get client list (password is used for hysteria2)
-    local users=$(jq -c '[.[] | {password: (.password // .uuid)}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "hysteria2") | {password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -117,7 +117,7 @@ EOF
 generate_xhttp_inbound() {
     local domain=$(get_setting "domain")
     
-    local users=$(jq -c '[.[] | {uuid: .uuid}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -149,7 +149,7 @@ generate_xhttp_reality_inbound() {
     local private_key=$(get_setting "reality_private_key")
     local short_id=$(get_setting "reality_short_id")
     
-    local users=$(jq -c '[.[] | {uuid: .uuid}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp-reality") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -188,7 +188,7 @@ generate_tuic_inbound() {
     local domain=$(get_setting "domain")
     
     # For TUIC we use uuid as uuid and password as password
-    local users=$(jq -c '[.[] | {uuid: .uuid, password: (.password // .uuid), name: .name}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "tuic") | {uuid: .uuid, password: (.password // .uuid), name: .name}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -213,7 +213,7 @@ EOF
 
 generate_http_inbound() {
     # For HTTP we use name as username and password as password
-    local users=$(jq -c '[.[] | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "http") | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -228,7 +228,7 @@ EOF
 
 generate_socks_inbound() {
     # For SOCKS we use name as username and password as password
-    local users=$(jq -c '[.[] | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "socks") | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -461,6 +461,7 @@ list_protocols() {
         print_warning "Protocols not configured"
     else
         echo "Active protocols:"
+        local protocol
         for protocol in "${protocols[@]}"; do
             case "$protocol" in
                 "vless-reality")

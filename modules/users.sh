@@ -112,59 +112,79 @@ generate_socks_link() {
     
     echo "socks5://${name}:${password}@${domain}:52144#${name}-socks-${country}"
 }
-
 generate_subscription_file() {
     local name=$1
     local uuid=$2
     local password=$3
-    local hash=$(generate_client_hash "$uuid")
+    local hash=$4
+    local protocols_json=$5
     local domain=$(get_setting "domain")
     local sub_dir="/var/www/cdn/subs"
     
     mkdir -p "$sub_dir"
     
-    # Collect all links
+    # Use passed hash or generate one if missing (legacy support)
+    if [[ -z "$hash" ]]; then
+        hash=$(generate_client_hash "$uuid")
+    fi
+    
+    # Collect links based on client's allowed protocols (passed as JSON array)
+    local active_server_protos=($(get_protocols))
+    local client_protos=""
+    if [[ -n "$protocols_json" && "$protocols_json" != "null" ]]; then
+        client_protos=$(echo "$protocols_json" | jq -r '.[]' 2>/dev/null)
+    fi
+
+    # Fallback to fetching if empty or null
+    if [[ -z "$client_protos" ]]; then
+        client_protos=$(jq -r --arg uuid "$uuid" '.[] | select(.uuid == $uuid) | .protocols?[]?' "$CLIENTS_FILE" 2>/dev/null)
+    fi
+    
     local links=""
-    while IFS= read -r protocol; do
-        case "$protocol" in
-            "vless-reality")
-                links+=$(generate_vless_reality_link "$name" "$uuid")
-                links+=$'\n'
-                ;;
-            "hysteria2")
-                links+=$(generate_hysteria2_link "$name" "$password")
-                links+=$'\n'
-                ;;
-            "xhttp")
-                links+=$(generate_xhttp_link "$name" "$uuid")
-                links+=$'\n'
-                ;;
-            "xhttp-reality")
-                links+=$(generate_xhttp_reality_link "$name" "$uuid")
-                links+=$'\n'
-                ;;
-            "tuic")
-                links+=$(generate_tuic_link "$name" "$uuid" "$password")
-                links+=$'\n'
-                ;;
-            "vless-ws")
-                links+=$(generate_vless_ws_link "$name" "$uuid")
-                links+=$'\n'
-                ;;
-            "xhttp-stealth")
-                links+=$(generate_xhttp_stealth_link "$name" "$uuid")
-                links+=$'\n'
-                ;;
-            "http")
-                links+=$(generate_http_link "$name" "$password")
-                links+=$'\n'
-                ;;
-            "socks")
-                links+=$(generate_socks_link "$name" "$password")
-                links+=$'\n'
-                ;;
-        esac
-    done < <(get_protocols)
+    local protocol
+    for protocol in $client_protos; do
+        # Check if protocol is still active on server
+        if [[ " ${active_server_protos[*]} " =~ " ${protocol} " ]]; then
+            case "$protocol" in
+                "vless-reality")
+                    links+=$(generate_vless_reality_link "$name" "$uuid")
+                    links+=$'\n'
+                    ;;
+                "hysteria2")
+                    links+=$(generate_hysteria2_link "$name" "$password")
+                    links+=$'\n'
+                    ;;
+                "xhttp")
+                    links+=$(generate_xhttp_link "$name" "$uuid")
+                    links+=$'\n'
+                    ;;
+                "xhttp-reality")
+                    links+=$(generate_xhttp_reality_link "$name" "$uuid")
+                    links+=$'\n'
+                    ;;
+                "tuic")
+                    links+=$(generate_tuic_link "$name" "$uuid" "$password")
+                    links+=$'\n'
+                    ;;
+                "vless-ws")
+                    links+=$(generate_vless_ws_link "$name" "$uuid")
+                    links+=$'\n'
+                    ;;
+                "xhttp-stealth")
+                    links+=$(generate_xhttp_stealth_link "$name" "$uuid")
+                    links+=$'\n'
+                    ;;
+                "http")
+                    links+=$(generate_http_link "$name" "$password")
+                    links+=$'\n'
+                    ;;
+                "socks")
+                    links+=$(generate_socks_link "$name" "$password")
+                    links+=$'\n'
+                    ;;
+            esac
+        fi
+    done
     
     # Base64 encode and save
     echo -n "$links" | base64 -w 0 > "$sub_dir/$hash"
@@ -172,23 +192,32 @@ generate_subscription_file() {
 
 regenerate_all_subscriptions() {
     local sub_dir="/var/www/cdn/subs"
+    mkdir -p "$sub_dir"
     rm -rf "$sub_dir"/*
     
     if [[ -f "$CLIENTS_FILE" ]]; then
+        local client_json
         while IFS= read -r client_json; do
+            [[ -z "$client_json" ]] && continue
             local name=$(echo "$client_json" | jq -r '.name')
             local uuid=$(echo "$client_json" | jq -r '.uuid')
-            # fallback password to uuid 
             local password=$(echo "$client_json" | jq -r '.password // .uuid')
-            generate_subscription_file "$name" "$uuid" "$password"
-        done < <(jq -c '.[]' "$CLIENTS_FILE")
+            local sub_hash=$(echo "$client_json" | jq -r '.sub_hash // empty')
+            local protos_json=$(echo "$client_json" | jq -c '.protocols // []')
+            generate_subscription_file "$name" "$uuid" "$password" "$sub_hash" "$protos_json"
+        done < <(jq -c '.[]' "$CLIENTS_FILE" 2>/dev/null)
     fi
 }
 
 get_subscription_url() {
     local uuid=$1
     local domain=$(get_setting "domain")
-    local hash=$(generate_client_hash "$uuid")
+    # Try to get persisted hash first
+    local hash=$(jq -r --arg uuid "$uuid" '.[] | select(.uuid == $uuid) | .sub_hash // empty' "$CLIENTS_FILE" 2>/dev/null)
+    # Fallback to generation if not found (during migration or transient state)
+    if [[ -z "$hash" ]]; then
+        hash=$(generate_client_hash "$uuid")
+    fi
     echo "https://${domain}/${hash}"
 }
 
@@ -339,17 +368,46 @@ add_client() {
         return
     fi
     
+    # Select protocols
+    echo ""
+    echo "Select protocols for these clients:"
+    local protocols=($(get_protocols))
+    if [[ ${#protocols[@]} -eq 0 ]]; then
+        print_warning "No protocols configured on server. Clients will have no protocols."
+        local selected_protos_json="[]"
+    else
+        for i in "${!protocols[@]}"; do
+            echo "$((i+1))) ${protocols[$i]}"
+        done
+        echo "Example: 1 2 4, or 'all', or leave empty for none"
+        read -p "Your choice: " p_choice
+        
+        local selected_protos=()
+        if [[ "$p_choice" == "all" ]]; then
+            selected_protos=("${protocols[@]}")
+        else
+            for idx in $p_choice; do
+                if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "${#protocols[@]}" ]]; then
+                    selected_protos+=("${protocols[$((idx-1))]}")
+                fi
+            done
+        fi
+        local selected_protos_json=$(printf "%s\n" "${selected_protos[@]}" | tr ' ' '\n' | jq -R 'select(. != "")' | jq -s -c 'flatten | unique' || echo "[]")
+    fi
+
     local created_clients=()
     
     for name in "${valid_names[@]}"; do
         local uuid=$(generate_uuid)
         local password=$(generate_password)
+        local sub_hash=$(generate_client_hash "$uuid")
         
         local tmp=$(mktemp)
-        jq --arg name "$name" --arg uuid "$uuid" --arg password "$password" '. += [{name: $name, uuid: $uuid, password: $password}]' "$CLIENTS_FILE" > "$tmp"
+        jq --arg name "$name" --arg uuid "$uuid" --arg password "$password" --arg sub_hash "$sub_hash" --argjson protos "$selected_protos_json" \
+            '. += [{name: $name, uuid: $uuid, password: $password, sub_hash: $sub_hash, protocols: $protos}]' "$CLIENTS_FILE" > "$tmp"
         mv "$tmp" "$CLIENTS_FILE"
         
-        generate_subscription_file "$name" "$uuid" "$password"
+        generate_subscription_file "$name" "$uuid" "$password" "$sub_hash" "$selected_protos_json"
         
         created_clients+=("$name:$uuid:$password")
         print_success "Client '$name' created"
@@ -456,55 +514,64 @@ show_client_links_internal() {
     echo "Links for $name:"
     echo ""
     
-    while IFS= read -r protocol; do
-        case "$protocol" in
-            "vless-reality")
-                echo "VLESS Reality:"
-                generate_vless_reality_link "$name" "$uuid"
-                echo ""
-                ;;
-            "hysteria2")
-                echo "Hysteria2:"
-                generate_hysteria2_link "$name" "$password"
-                echo ""
-                ;;
-            "xhttp")
-                echo "XHTTP:"
-                generate_xhttp_link "$name" "$uuid"
-                echo ""
-                ;;
-            "xhttp-reality")
-                echo "XHTTP Reality:"
-                generate_xhttp_reality_link "$name" "$uuid"
-                echo ""
-                ;;
-            "tuic")
-                echo "TUIC v5:"
-                generate_tuic_link "$name" "$uuid" "$password"
-                echo ""
-                ;;
-            "vless-ws")
-                echo "VLESS WebSocket (Nginx):"
-                generate_vless_ws_link "$name" "$uuid"
-                echo ""
-                ;;
-            "xhttp-stealth")
-                echo "XHTTP Stealth (Nginx):"
-                generate_xhttp_stealth_link "$name" "$uuid"
-                echo ""
-                ;;
-            "http")
-                echo "HTTP (Proxy):"
-                generate_http_link "$name" "$password"
-                echo ""
-                ;;
-            "socks")
-                echo "SOCKS5 (Proxy):"
-                generate_socks_link "$name" "$password"
-                echo ""
-                ;;
-        esac
-    done < <(get_protocols)
+    local active_server_protos=($(get_protocols))
+    local client_protos=$(jq -r --arg uuid "$uuid" '.[] | select(.uuid == $uuid) | .protocols?[]?' "$CLIENTS_FILE" 2>/dev/null)
+    
+    if [[ -n "$client_protos" ]]; then
+        local protocol
+        for protocol in $client_protos; do
+            # Check if protocol is still active on server
+            if [[ " ${active_server_protos[*]} " =~ " ${protocol} " ]]; then
+                case "$protocol" in
+                    "vless-reality")
+                        echo "VLESS Reality:"
+                        generate_vless_reality_link "$name" "$uuid"
+                        echo ""
+                        ;;
+                    "hysteria2")
+                        echo "Hysteria2:"
+                        generate_hysteria2_link "$name" "$password"
+                        echo ""
+                        ;;
+                    "xhttp")
+                        echo "XHTTP:"
+                        generate_xhttp_link "$name" "$uuid"
+                        echo ""
+                        ;;
+                    "xhttp-reality")
+                        echo "XHTTP Reality:"
+                        generate_xhttp_reality_link "$name" "$uuid"
+                        echo ""
+                        ;;
+                    "tuic")
+                        echo "TUIC v5:"
+                        generate_tuic_link "$name" "$uuid" "$password"
+                        echo ""
+                        ;;
+                    "vless-ws")
+                        echo "VLESS WebSocket (Nginx):"
+                        generate_vless_ws_link "$name" "$uuid"
+                        echo ""
+                        ;;
+                    "xhttp-stealth")
+                        echo "XHTTP Stealth (Nginx):"
+                        generate_xhttp_stealth_link "$name" "$uuid"
+                        echo ""
+                        ;;
+                    "http")
+                        echo "HTTP (Proxy):"
+                        generate_http_link "$name" "$password"
+                        echo ""
+                        ;;
+                    "socks")
+                        echo "SOCKS5 (Proxy):"
+                        generate_socks_link "$name" "$password"
+                        echo ""
+                        ;;
+                esac
+            fi
+        done
+    fi
     
     local sub_url=$(get_subscription_url "$uuid")
     echo "---"
@@ -557,6 +624,78 @@ show_client_links() {
     echo ""
 }
 
+
+edit_client() {
+    echo ""
+    echo "=== Edit Client Protocols ==="
+    echo ""
+    
+    local clients=($(jq -r '.[] | .name' "$CLIENTS_FILE"))
+    if [[ ${#clients[@]} -eq 0 ]]; then
+        print_warning "No clients"
+        return
+    fi
+    
+    for i in "${!clients[@]}"; do
+        echo "$((i+1))) ${clients[$i]}"
+    done
+    echo "0) Back"
+    echo ""
+    
+    read -p "Select client: " choice
+    [[ "$choice" == "0" ]] && return
+    
+    local index=$((choice - 1))
+    if [[ $index -lt 0 ]] || [[ $index -ge ${#clients[@]} ]]; then
+        print_error "Invalid choice"
+        return
+    fi
+    
+    local name="${clients[$index]}"
+    local current_protos=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .protocols[]' "$CLIENTS_FILE" 2>/dev/null)
+    
+    echo ""
+    echo "Client: $name"
+    echo "Current protocols: ${current_protos:-None}"
+    echo ""
+    
+    local all_protocols=($(get_protocols))
+    echo "Select new protocol list:"
+    for i in "${!all_protocols[@]}"; do
+        echo "$((i+1))) ${all_protocols[$i]}"
+    done
+    echo "Example: 1 2 4, or 'all', or leave empty for none"
+    read -p "Your choice: " p_choice
+    
+    local selected_protos=()
+    if [[ "$p_choice" == "all" ]]; then
+        selected_protos=("${all_protocols[@]}")
+    else
+        for idx in $p_choice; do
+            if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "${#all_protocols[@]}" ]]; then
+                selected_protos+=("${all_protocols[$((idx-1))]}")
+            fi
+        done
+    fi
+    local selected_protos_json=$(printf "%s\n" "${selected_protos[@]}" | tr ' ' '\n' | jq -R 'select(. != "")' | jq -s -c 'flatten | unique' || echo "[]")
+    
+    local tmp=$(mktemp)
+    jq --arg name "$name" --argjson protos "$selected_protos_json" \
+        'map(if .name == $name then . + {protocols: $protos} else . end)' "$CLIENTS_FILE" > "$tmp"
+    mv "$tmp" "$CLIENTS_FILE"
+    
+    print_success "Client '$name' updated"
+    
+    # Regenerate files and rebuild config
+    local uuid=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .uuid' "$CLIENTS_FILE")
+    local password=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .password // .uuid' "$CLIENTS_FILE")
+    local sub_hash=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .sub_hash' "$CLIENTS_FILE")
+    
+    generate_subscription_file "$name" "$uuid" "$password" "$sub_hash" "$selected_protos_json"
+    rebuild_config
+    systemctl restart sing-box
+}
+
 list_clients() {
     echo ""
     echo "=== Client List ==="
@@ -572,4 +711,62 @@ list_clients() {
     fi
     
     echo ""
+}
+
+migrate_clients_to_v2() {
+    if [[ ! -f "$CLIENTS_FILE" ]]; then
+        return
+    fi
+    
+    local clients_json=$(cat "$CLIENTS_FILE")
+    [[ -z "$clients_json" || "$clients_json" == "null" || "$clients_json" == "[]" ]] && return
+
+    # Check for missing sub_hash, missing protocols, or space-separated protocols
+    local needs_migration=$(echo "$clients_json" | jq -e '
+        .[] | select(
+            .sub_hash == null or 
+            .protocols == null or 
+            (.protocols? // [] | .[]? | strings | contains(" "))
+        )
+    ' >/dev/null 2>&1; echo $?)
+
+    if [[ "$needs_migration" -eq 0 ]]; then
+        print_info "Migrating/Sanitizing clients database..."
+        
+        local active_protos_json=$(get_protocols | jq -R . | jq -s -c .)
+        local temp_clients=$(mktemp)
+        echo "[]" > "$temp_clients"
+        
+        while IFS= read -r client_json; do
+            [[ -z "$client_json" ]] && continue
+            
+            local uuid=$(echo "$client_json" | jq -r '.uuid')
+            local sub_hash=$(echo "$client_json" | jq -r '.sub_hash // empty')
+            local protos=$(echo "$client_json" | jq -c '.protocols // empty')
+            
+            # 1. sub_hash
+            if [[ -z "$sub_hash" || "$sub_hash" == "null" ]]; then
+                sub_hash=$(generate_client_hash "$uuid")
+            fi
+            
+            # 2. protocols
+            if [[ -z "$protos" || "$protos" == "null" || "$protos" == "[]" ]]; then
+                protos="$active_protos_json"
+            else
+                # Sanitize: flatten and unique
+                protos=$(echo "$protos" | jq -c 'if type == "array" then map(split(" ")) | flatten | map(select(. != "")) | unique else . end')
+            fi
+            
+            # Update object and append
+            local updated_client=$(echo "$client_json" | jq -c --arg sh "$sub_hash" --argjson ps "$protos" '.sub_hash = $sh | .protocols = $ps')
+            local tmp_arr=$(mktemp)
+            jq --argjson new "$updated_client" '. += [$new]' "$temp_clients" > "$tmp_arr"
+            mv "$tmp_arr" "$temp_clients"
+            
+        done < <(echo "$clients_json" | jq -c '.[]')
+        
+        mv "$temp_clients" "$CLIENTS_FILE"
+        print_success "Migration/Sanitization complete"
+        regenerate_all_subscriptions
+    fi
 }
