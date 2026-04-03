@@ -68,6 +68,7 @@ install_mtg() {
     cat > "$MTG_INSTALL_DIR/config.toml" <<EOF
 secret = "$secret"
 bind-to = "0.0.0.0:4430"
+fallback = "127.0.0.1:443"
 EOF
 
     set_setting "mtg_secret" "$secret"

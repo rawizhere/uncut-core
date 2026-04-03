@@ -31,7 +31,7 @@ generate_vless_ws_link() {
     # URL encode path for link
     local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
     
-    echo "vless://${uuid}@${domain}:443?type=ws&security=tls&path=${encoded_path}&encryption=none#${name}-vless-ws-${country}"
+    echo "vless://${uuid}@${domain}:443?type=ws&security=tls&path=${encoded_path}&encryption=none&fp=chrome#${name}-vless-ws-${country}"
 }
 
 generate_xhttp_stealth_link() {
@@ -50,7 +50,7 @@ generate_xhttp_stealth_link() {
     local salted_path=$(get_salted_path "$primary_path_raw")
     local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
     
-    echo "vless://${uuid}@${domain}:443?type=xhttp&security=tls&path=${encoded_path}&encryption=none&mode=auto&host=${domain}#${name}-xhttp-stealth-${country}"
+    echo "vless://${uuid}@${domain}:443?type=xhttp&security=tls&path=${encoded_path}&encryption=none&mode=auto&host=${domain}&fp=chrome#${name}-xhttp-stealth-${country}"
 }
 
 generate_hysteria2_link() {
@@ -69,7 +69,7 @@ generate_xhttp_link() {
     local domain=$(get_setting "domain")
     local country=$(get_setting "country")
     
-    echo "vless://${uuid}@${domain}:2053?type=xhttp&security=tls&path=%2F&encryption=none&mode=auto&host=${domain}#${name}-xhttp-${country}"
+    echo "vless://${uuid}@${domain}:2053?type=xhttp&security=tls&path=%2F&encryption=none&mode=auto&host=${domain}&fp=chrome#${name}-xhttp-${country}"
 }
 
 generate_xhttp_reality_link() {

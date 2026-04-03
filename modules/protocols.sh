@@ -45,7 +45,7 @@ generate_xhttp_stealth_inbound() {
     "type": "xhttp",
     "path": "$salted_path",
     "mode": "auto",
-    "x_padding_bytes": "100-1000",
+    "x_padding_bytes": "100-2500",
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   }
@@ -100,6 +100,7 @@ generate_hysteria2_inbound() {
   "listen": "0.0.0.0",
   "listen_port": 8443,
   "users": $users,
+  "masquerade": "https://1.1.1.1",
   "obfs": {
     "type": "salamander",
     "password": "$obfs_password"
@@ -130,7 +131,7 @@ generate_xhttp_inbound() {
     "type": "xhttp",
     "path": "/",
     "mode": "auto",
-    "x_padding_bytes": "100-1000",
+    "x_padding_bytes": "100-2500",
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   },
@@ -162,7 +163,7 @@ generate_xhttp_reality_inbound() {
     "type": "xhttp",
     "path": "/",
     "mode": "auto",
-    "x_padding_bytes": "100-1000",
+    "x_padding_bytes": "100-2500",
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   },
