@@ -68,12 +68,14 @@ generate_nginx_masking_block() {
              blocks+="        proxy_pass http://127.0.0.1:10001;\n"
              blocks+="        proxy_set_header Upgrade \$http_upgrade;\n"
              blocks+="        proxy_set_header Connection \"upgrade\";\n"
+             blocks+="        proxy_read_timeout 300s;\n"
         else
              # XHTTP-Stealth (Odd) -> Port 10002
              # Needs NO buffering and NO Upgrade headers
              blocks+="        proxy_pass http://127.0.0.1:10002;\n"
              blocks+="        proxy_buffering off;\n"
              blocks+="        proxy_request_buffering off;\n"
+             blocks+="        tcp_nodelay on;\n"
              blocks+="        client_max_body_size 0;\n"
              blocks+="        proxy_read_timeout 1h;\n"
              blocks+="        proxy_send_timeout 1h;\n"
@@ -119,6 +121,17 @@ generate_nginx_masking_block() {
     blocks+="        return 200 \"Contact: security@cloudfront.net\\nExpires: 2027-12-31T23:59:59.000Z\\n\";\n"
     blocks+="    }\n\n"
     
+    # Honey Pot Locations (Trigger for Fail2Ban)
+    local honeypots=("/.env" "/.git" "/wp-login.php" "/xmlrpc.php" "/.aws/credentials" "/config.php" "/.ssh")
+    blocks+="    # Honey Pot: Instant Ban Targets\n"
+    for hp in "${honeypots[@]}"; do
+        blocks+="    location = $hp {\n"
+        blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
+        blocks+="        add_header X-Honey-Pot \"active\" always;\n"
+        blocks+="        return 444;\n"
+        blocks+="    }\n\n"
+    done
+
     blocks+="    # Favicon\n"
     blocks+="    location = /favicon.ico {\n"
     blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
@@ -175,8 +188,11 @@ setup_nginx_cdn() {
     # Generate realistic identifiers
     local cf_edge_id="d$(openssl rand -hex 7)"  # d + 14 hex chars = 15 total
     local edge_node_id="$(openssl rand -hex 6)"
-    local cf_pop_codes=("FRA50-C1" "IAD89-C2" "LHR61-C1" "NRT57-C2" "SIN52-C1" "SYD62-C2")
+    local cf_pop_codes=("FRA50-C1" "IAD89-C2" "LHR61-C1" "NRT57-C2" "SIN52-C1" "SYD62-C2" "AMS54-C1" "CDG50-C1" "DFW55-C3" "HEL50-C2" "HKG54-C1" "JFK50-P3" "LAX50-P1" "MAD50-C1" "MIA50-C1" "SFO50-C1" "ZRH50-C1" "HEL50-C1")
     local cf_pop="${cf_pop_codes[$RANDOM % ${#cf_pop_codes[@]}]}"
+    
+    # Generate realistic AWS Request ID (longer base64)
+    local aws_req_id=$(openssl rand -base64 42 | tr -d '+/=\n' | cut -c1-56)
     
     # Create Nginx configuration
     print_info "Creating Nginx configuration..."
@@ -188,7 +204,8 @@ setup_nginx_cdn() {
     export DOMAIN="$domain"
     export INSTALL_DIR="$INSTALL_DIR"
     export CF_POP_REGION="${cf_pop:0:3}"
-    export HOST_ID=$(openssl rand -base64 20 | tr -d '\n')
+    export HOST_ID=$(openssl rand -base64 20 | tr -d '+/=\n')
+    export AWS_REQ_ID="$aws_req_id"
     export XHTTP_LOCATION_BLOCKS=$(generate_nginx_masking_block)
     
     # Create headers snippet
@@ -196,7 +213,7 @@ setup_nginx_cdn() {
     local template_headers="$SCRIPT_DIR/templates/nginx_cdn_headers.conf.template"
     
     if [[ -f "$template_headers" ]]; then
-        envsubst '$SECOND_LEVEL $EDGE_NODE_ID $CF_EDGE_ID $CF_POP $DOMAIN $INSTALL_DIR $CF_POP_REGION' < "$template_headers" > /etc/nginx/snippets/cdn_headers.conf
+        envsubst '$SECOND_LEVEL $EDGE_NODE_ID $CF_EDGE_ID $CF_POP $DOMAIN $INSTALL_DIR $CF_POP_REGION $AWS_REQ_ID' < "$template_headers" > /etc/nginx/snippets/cdn_headers.conf
     else
         print_warning "Template headers not found. Using fallback."
         # Fallback heredoc
@@ -209,7 +226,7 @@ setup_nginx_cdn() {
     add_header Accept-Ranges "bytes" always;
     add_header Vary "Accept-Encoding, Origin" always;
     add_header Age "\$cache_age" always;
-    add_header X-Amz-Cf-Id "\$request_id==" always;
+    add_header X-Amz-Cf-Id "${AWS_REQ_ID}=" always;
     add_header X-Amz-Cf-Pop "${CF_POP}" always;
     add_header ETag "\"\$request_id\"" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
@@ -222,8 +239,8 @@ END
     # Create site config
     local template_site="$SCRIPT_DIR/templates/nginx_site.conf.template"
     if [[ -f "$template_site" ]]; then
-        # Only replace DOMAIN, INSTALL_DIR, and HOST_ID. 
-        envsubst '$DOMAIN $INSTALL_DIR $HOST_ID' < "$template_site" > /etc/nginx/sites-available/cdn
+        # Only replace DOMAIN, INSTALL_DIR, HOST_ID, AWS_REQ_ID
+        envsubst '$DOMAIN $INSTALL_DIR $HOST_ID $AWS_REQ_ID' < "$template_site" > /etc/nginx/sites-available/cdn
     else
         print_warning "Template site config not found. Using fallback."
         cat > /etc/nginx/sites-available/cdn <<EOF
@@ -244,6 +261,12 @@ map \$msec \$cache_age {
 
 # HTTP server - serves images and proxies ACME challenges
 server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+
+server {
     listen 80;
     server_name $DOMAIN;
 
@@ -251,6 +274,15 @@ server {
     location / {
         return 301 https://\$host\$request_uri;
     }
+}
+
+# Default HTTPS server - Close connection for unknown SNI/IP
+server {
+    listen 443 ssl http2 default_server;
+    server_name _;
+    ssl_certificate $INSTALL_DIR/certs/certificates/$DOMAIN.crt;
+    ssl_certificate_key $INSTALL_DIR/certs/certificates/$DOMAIN.key;
+    return 444;
 }
 
 # HTTPS server - CDN masking
@@ -272,12 +304,21 @@ server {
     add_header Access-Control-Allow-Origin "*" always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
 
-    # Subscriptions
+    # Subscriptions (Classic Path)
     location ~ "^/([a-f0-9]{32})$" {
         include /etc/nginx/snippets/cdn_headers.conf;
         alias /var/www/cdn/subs/\$1;
         default_type "application/octet-stream";
         add_header Content-Disposition "inline";
+    }
+
+    # Subscriptions (CDN Masked Path: Asset Injection Style)
+    location ~ "^/static/v1/auth/([a-f0-9]{32})\.bin$" {
+        include /etc/nginx/snippets/cdn_headers.conf;
+        alias /var/www/cdn/subs/\$1;
+        default_type "application/octet-stream";
+        add_header Content-Disposition "inline";
+        add_header Cache-Control "private, no-cache, no-store, must-revalidate" always;
     }
 
     # Images (with cache variation)
@@ -330,8 +371,9 @@ server {
 <Error>
     <Code>AccessDenied</Code>
     <Message>Access Denied</Message>
-    <RequestId>\$request_id</RequestId>
+    <RequestId>${AWS_REQ_ID}</RequestId>
     <HostId>${HOST_ID}</HostId>
+    <Resource>/</Resource>
 </Error>';
     }
 }
@@ -345,9 +387,15 @@ EOF
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/default
     
-    # Hide nginx version (server_tokens off)
+    # Hide nginx version and add Rate Limiting zones
     if ! grep -q "server_tokens off" /etc/nginx/nginx.conf; then
         sed -i '/http {/a \    server_tokens off;' /etc/nginx/nginx.conf
+    fi
+    
+    # Add Rate Limiting zones if not present
+    if ! grep -q "limit_req_zone" /etc/nginx/nginx.conf; then
+        sed -i '/http {/a \    limit_req_zone $binary_remote_addr zone=anti_scan:10m rate=2r/s;' /etc/nginx/nginx.conf
+        sed -i '/http {/a \    limit_conn_zone $binary_remote_addr zone=anti_conn:10m;' /etc/nginx/nginx.conf
     fi
     
     # Check configuration

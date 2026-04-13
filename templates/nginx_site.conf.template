@@ -15,6 +15,12 @@ map $msec $cache_age {
 
 # HTTP server - serves images and proxies ACME challenges
 server {
+    listen 80 default_server;
+    server_name _;
+    return 444;
+}
+
+server {
     listen 80;
     server_name ${DOMAIN};
 
@@ -24,17 +30,34 @@ server {
     }
 }
 
+# Default HTTPS server - Close connection for unknown SNI/IP
+server {
+    listen 443 ssl http2 default_server;
+    server_name _;
+    ssl_certificate ${INSTALL_DIR}/certs/certificates/${DOMAIN}.crt;
+    ssl_certificate_key ${INSTALL_DIR}/certs/certificates/${DOMAIN}.key;
+    return 444;
+}
+
 # HTTPS server - CDN masking
 server {
     listen 443 ssl http2;
     server_name ${DOMAIN};
     server_tokens off;
 
+    # Apply Rate Limiting
+    limit_req zone=anti_scan burst=5 nodelay;
+    limit_conn anti_conn 10;
+
     # SSL certificates (managed by sing-box ACME)
     ssl_certificate ${INSTALL_DIR}/certs/certificates/${DOMAIN}.crt;
     ssl_certificate_key ${INSTALL_DIR}/certs/certificates/${DOMAIN}.key;
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1h;
+    ssl_session_tickets on;
 
     # CDN-like headers (base)
     include /etc/nginx/snippets/cdn_headers.conf;
@@ -66,14 +89,15 @@ server {
     # Everything else -> 403 (S3 XML style) - MUST be last
     location / {
         include /etc/nginx/snippets/cdn_headers.conf;
-        add_header x-amz-request-id "$request_id" always;
+        add_header x-amz-request-id "${AWS_REQ_ID}" always;
         default_type application/xml;
         return 403 '<?xml version="1.0" encoding="UTF-8"?>
 <Error>
     <Code>AccessDenied</Code>
     <Message>Access Denied</Message>
-    <RequestId>$request_id</RequestId>
+    <RequestId>${AWS_REQ_ID}</RequestId>
     <HostId>${HOST_ID}</HostId>
+    <Resource>/</Resource>
 </Error>';
     }
 

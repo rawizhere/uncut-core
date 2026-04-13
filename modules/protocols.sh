@@ -61,6 +61,11 @@ generate_vless_reality_inbound() {
     # Get client list
     local users=$(jq -c '[.[] | select(.protocols[]? == "vless-reality") | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
+    local padding_json=""
+    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
+        padding_json=', "padding": true'
+    fi
+    
     cat <<EOF
 {
   "type": "vless",
@@ -80,7 +85,7 @@ generate_vless_reality_inbound() {
       "private_key": "$private_key",
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
-    }
+    }${padding_json}
   }
 }
 EOF
@@ -93,6 +98,11 @@ generate_hysteria2_inbound() {
     # Get client list (password is used for hysteria2)
     local users=$(jq -c '[.[] | select(.protocols[]? == "hysteria2") | {password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
+    local padding_json=""
+    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
+        padding_json=', "padding": true'
+    fi
+
     cat <<EOF
 {
   "type": "hysteria2",
@@ -109,7 +119,7 @@ generate_hysteria2_inbound() {
     "enabled": true,
     "alpn": ["h3"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
+    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
   }
 }
 EOF
@@ -120,6 +130,16 @@ generate_xhttp_inbound() {
     
     local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
+    local padding_json=""
+    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
+        padding_json=', "padding": true'
+    fi
+
+    local padding_range="100-2500"
+    if [[ $(get_setting "traffic_shaping_level" "low") == "high" ]]; then
+        padding_range="500-4000"
+    fi
+
     cat <<EOF
 {
   "type": "vless",
@@ -131,7 +151,7 @@ generate_xhttp_inbound() {
     "type": "xhttp",
     "path": "/",
     "mode": "auto",
-    "x_padding_bytes": "100-2500",
+    "x_padding_bytes": "$padding_range",
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   },
@@ -139,7 +159,7 @@ generate_xhttp_inbound() {
     "enabled": true,
     "alpn": ["h2", "http/1.1"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
+    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
   }
 }
 EOF
@@ -152,6 +172,11 @@ generate_xhttp_reality_inbound() {
     
     local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp-reality") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
+    local padding_json=""
+    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
+        padding_json=', "padding": true'
+    fi
+
     cat <<EOF
 {
   "type": "vless",
@@ -179,7 +204,7 @@ generate_xhttp_reality_inbound() {
       "private_key": "$private_key",
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
-    }
+    }${padding_json}
   }
 }
 EOF
@@ -191,6 +216,11 @@ generate_tuic_inbound() {
     # For TUIC we use uuid as uuid and password as password
     local users=$(jq -c '[.[] | select(.protocols[]? == "tuic") | {uuid: .uuid, password: (.password // .uuid), name: .name}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
+    local padding_json=""
+    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
+        padding_json=', "padding": true'
+    fi
+
     cat <<EOF
 {
   "type": "tuic",
@@ -206,7 +236,7 @@ generate_tuic_inbound() {
     "enabled": true,
     "alpn": ["h3"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
+    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
   }
 }
 EOF
@@ -311,7 +341,8 @@ add_protocol() {
     echo "7) XHTTP Stealth (Nginx)(TCP :443)"
     echo "8) HTTP                 (TCP :52143)"
     echo "9) SOCKS5               (TCP :52144)"
-    echo "10) Create all protocols"
+    echo "10) ShadowTLS v3        (TCP :8444)"
+    echo "11) Create all protocols"
     echo "0) Back"
     echo ""
     
@@ -321,9 +352,9 @@ add_protocol() {
         return
     fi
 
-    if [[ "$choice" == "10" ]]; then
+    if [[ "$choice" == "11" ]]; then
         print_info "Adding all protocols..."
-        local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks")
+        local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls")
         for p in "${all_protos[@]}"; do
             if ! protocol_exists "$p"; then
                 add_protocol_logic "$p"
@@ -346,6 +377,7 @@ add_protocol() {
         7) protocol="xhttp-stealth" ;;
         8) protocol="http" ;;
         9) protocol="socks" ;;
+        10) protocol="shadowtls" ;;
         *)
             print_error "Invalid choice"
             return
@@ -491,6 +523,9 @@ list_protocols() {
                     ;;
                 "socks")
                     echo "  • SOCKS5 (:52144)"
+                    ;;
+                "shadowtls")
+                    echo "  • ShadowTLS v3 (:8444)"
                     ;;
             esac
         done

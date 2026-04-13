@@ -202,11 +202,19 @@ EOF
     print_info "Adding Nginx scraping protection..."
     local n_filter_tmpl="$SCRIPT_DIR/templates/fail2ban_nginx_filter.conf.template"
     local n_jail_tmpl="$SCRIPT_DIR/templates/fail2ban_nginx_jail.conf.template"
+    local h_filter_tmpl="$SCRIPT_DIR/templates/fail2ban_honeypot_filter.conf.template"
+    local h_jail_tmpl="$SCRIPT_DIR/templates/fail2ban_honeypot_jail.conf.template"
 
     if [[ -f "$n_filter_tmpl" ]] && [[ -f "$n_jail_tmpl" ]]; then
         cat "$n_filter_tmpl" > /etc/fail2ban/filter.d/nginx-forbidden.conf
         cat "$n_jail_tmpl" > /etc/fail2ban/jail.d/uncut-core-nginx.conf
         print_success "Nginx protection added (10 attempts/min -> 1h ban)"
+    fi
+
+    if [[ -f "$h_filter_tmpl" ]] && [[ -f "$h_jail_tmpl" ]]; then
+        cat "$h_filter_tmpl" > /etc/fail2ban/filter.d/nginx-honeypot.conf
+        cat "$h_jail_tmpl" > /etc/fail2ban/jail.d/uncut-core-honeypot.conf
+        print_success "Nginx Honey Pot added (1 attempt -> 24h ban)"
     fi
 
     

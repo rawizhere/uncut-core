@@ -6,7 +6,7 @@ add_header Server "CloudFront" always;
 add_header Accept-Ranges "bytes" always;
 add_header Vary "Accept-Encoding, Origin" always;
 add_header Age "$cache_age" always;
-add_header X-Amz-Cf-Id "$request_id==" always;
+add_header X-Amz-Cf-Id "${AWS_REQ_ID}=" always;
 add_header X-Amz-Cf-Pop "${CF_POP}" always;
 add_header ETag "\"$request_id\"" always;
 add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;

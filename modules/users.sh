@@ -10,16 +10,15 @@ generate_vless_reality_link() {
     local public_key=$(get_setting "reality_public_key")
     local short_id=$(get_setting "reality_short_id")
     
-    echo "vless://${uuid}@${domain}:2083?type=tcp&encryption=none&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&flow=xtls-rprx-vision#${name}-vless-reality-${country}"
+    local dpi_params=$(get_dpi_link_params)
+    echo "vless://${uuid}@${domain}:2083?type=tcp&encryption=none&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&flow=xtls-rprx-vision${dpi_params}#${name}-vless-reality-${country}"
 }
-
 generate_vless_ws_link() {
     local name=$1
     local uuid=$2
     local domain=$(get_setting "domain")
     local country=$(get_setting "country")
     
-    # Get current theme primary path
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
     local primary_path_raw=$(echo "$paths_str" | cut -d',' -f1)
@@ -27,11 +26,10 @@ generate_vless_ws_link() {
         primary_path_raw="/chat"
     fi
     local salted_path=$(get_salted_path "$primary_path_raw")
-    
-    # URL encode path for link
     local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
     
-    echo "vless://${uuid}@${domain}:443?type=ws&security=tls&path=${encoded_path}&encryption=none&fp=chrome#${name}-vless-ws-${country}"
+    local dpi_params=$(get_dpi_link_params)
+    echo "vless://${uuid}@${domain}:443?type=ws&security=tls&path=${encoded_path}&encryption=none&fp=chrome${dpi_params}#${name}-vless-ws-${country}"
 }
 
 generate_xhttp_stealth_link() {
@@ -42,7 +40,6 @@ generate_xhttp_stealth_link() {
     
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
-    # Use 2nd path for XHTTP Stealth (corresponds to odd index in nginx loop)
     local primary_path_raw=$(echo "$paths_str" | cut -d',' -f2)
     if [[ -z "$primary_path_raw" || "$primary_path_raw" == "null" ]]; then
         primary_path_raw="/chat"
@@ -50,7 +47,8 @@ generate_xhttp_stealth_link() {
     local salted_path=$(get_salted_path "$primary_path_raw")
     local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
     
-    echo "vless://${uuid}@${domain}:443?type=xhttp&security=tls&path=${encoded_path}&encryption=none&mode=auto&host=${domain}&fp=chrome#${name}-xhttp-stealth-${country}"
+    local dpi_params=$(get_dpi_link_params)
+    echo "vless://${uuid}@${domain}:443?type=xhttp&security=tls&path=${encoded_path}&encryption=none&mode=auto&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-stealth-${country}"
 }
 
 generate_hysteria2_link() {
@@ -60,7 +58,8 @@ generate_hysteria2_link() {
     local country=$(get_setting "country")
     local obfs_password=$(get_setting "hysteria_obfs_password")
     
-    echo "hysteria2://${password}@${domain}:8443?obfs=salamander&obfs-password=${obfs_password}&sni=${domain}#${name}-hysteria2-${country}"
+    local dpi_params=$(get_dpi_link_params)
+    echo "hysteria2://${password}@${domain}:8443?obfs=salamander&obfs-password=${obfs_password}&sni=${domain}${dpi_params}#${name}-hysteria2-${country}"
 }
 
 generate_xhttp_link() {
@@ -68,8 +67,8 @@ generate_xhttp_link() {
     local uuid=$2
     local domain=$(get_setting "domain")
     local country=$(get_setting "country")
-    
-    echo "vless://${uuid}@${domain}:2053?type=xhttp&security=tls&path=%2F&encryption=none&mode=auto&host=${domain}&fp=chrome#${name}-xhttp-${country}"
+    local dpi_params=$(get_dpi_link_params)
+    echo "vless://${uuid}@${domain}:2053?type=xhttp&security=tls&path=%2F&encryption=none&mode=auto&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-${country}"
 }
 
 generate_xhttp_reality_link() {
@@ -80,8 +79,8 @@ generate_xhttp_reality_link() {
     local sni=$(get_setting "sni")
     local public_key=$(get_setting "reality_public_key")
     local short_id=$(get_setting "reality_short_id")
-    
-    echo "vless://${uuid}@${domain}:8443?type=xhttp&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&mode=auto&host=${sni}#${name}-xhttp-reality-${country}"
+    local dpi_params=$(get_dpi_link_params)
+    echo "vless://${uuid}@${domain}:8443?type=xhttp&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&mode=auto&host=${sni}${dpi_params}#${name}-xhttp-reality-${country}"
 }
 
 generate_tuic_link() {
@@ -182,6 +181,10 @@ generate_subscription_file() {
                     links+=$(generate_socks_link "$name" "$password")
                     links+=$'\n'
                     ;;
+                "shadowtls")
+                    links+=$(generate_shadowtls_link "$name")
+                    links+=$'\n'
+                    ;;
             esac
         fi
     done
@@ -270,6 +273,10 @@ rebuild_config() {
             "socks")
                 local socks_inbound=$(generate_socks_inbound)
                 inbounds=$(echo "$inbounds" | jq --argjson inbound "$socks_inbound" '. += [$inbound]')
+                ;;
+            "shadowtls")
+                local shadowtls_inbound=$(generate_shadowtls_inbound)
+                inbounds=$(echo "$inbounds" | jq --argjson inbound "$shadowtls_inbound" '. += [$inbound]')
                 ;;
         esac
     done < <(get_protocols)
@@ -566,6 +573,11 @@ show_client_links_internal() {
                     "socks")
                         echo "SOCKS5 (Proxy):"
                         generate_socks_link "$name" "$password"
+                        echo ""
+                        ;;
+                    "shadowtls")
+                        echo "ShadowTLS v3:"
+                        generate_shadowtls_link "$name"
                         echo ""
                         ;;
                 esac

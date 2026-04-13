@@ -3,7 +3,7 @@
 Raw proxy server manager.
 
 Built on sing-box extended.
-Server disguises as a CloudFront backend. Deep traffic masking (AWS/Google/Sentry signatures) available for specific protocols. Includes SSL automation and hardening (UFW/Fail2ban).
+Server seamlessly disguises as an AWS CloudFront backend/edge node. Features deep traffic masking, TLS fingerprinting protection, SSL automation, and server hardening (UFW/Fail2ban/Honey Pots).
 
 ### Screenshots
 

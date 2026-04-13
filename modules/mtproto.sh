@@ -52,8 +52,8 @@ install_mtg() {
     
     local domain=$(get_setting "domain")
     if [[ -z "$domain" ]]; then
-        print_warning "Domain not found in settings! Using google.com as fallback domain for TLS."
-        domain="google.com"
+        print_warning "Domain not found in settings! Using aws.amazon.com as fallback domain for TLS."
+        domain="aws.amazon.com"
     fi
     
     print_info "Generating TLS secret for $domain..."

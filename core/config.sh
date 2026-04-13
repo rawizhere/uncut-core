@@ -22,14 +22,16 @@ init_settings() {
     
     # Core system settings
     set_setting "install_date" "$(date +%Y-%m-%d)"
-    set_setting "auto_update" "false"
+    [[ -z $(get_setting "protocol_salt") ]] && set_setting "protocol_salt" "$(openssl rand -hex 4)"
+    set_setting "masking_theme" "cdn_sync" # Always CloudFront/AWS
+    [[ -z $(get_setting "auto_update") ]] && set_setting "auto_update" "false"
     
-    # Generate unique salt for paths
-    local salt=$(openssl rand -hex 4)
-    set_setting "protocol_salt" "$salt"
+    # DPI Flags
+    [[ -z $(get_setting "dpi_fragment_enabled") ]] && set_setting "dpi_fragment_enabled" "true"
+    [[ -z $(get_setting "dpi_hello_padding_enabled") ]] && set_setting "dpi_hello_padding_enabled" "true"
     
-    # Set default theme (Theme C: CDN Sync / AWS S3)
-    set_setting "masking_theme" "cdn_sync"
+    set_setting "traffic_shaping_level" "high"
+    set_setting "shadow_tls_enabled" "false"
     
     print_success "Settings initialized"
 }
@@ -51,27 +53,29 @@ get_salted_path() {
     echo "/${base}/${salt}/stream"
 }
 
+# Helper for DPI parameters in links
+get_dpi_link_params() {
+    local params=""
+    
+    local fragment=$(get_setting "dpi_fragment_enabled" "false")
+    if [[ "$fragment" == "true" ]]; then
+        # Default fragmentation for Nekobox/v2rayN compatible parameters
+        params+="&fragment=10-500,0-20"
+    fi
+    
+    local padding=$(get_setting "dpi_hello_padding_enabled" "false")
+    if [[ "$padding" == "true" ]]; then
+        # Hello Padding (randomize handshake length)
+        params+="&padding=900-1200"
+    fi
+    
+    echo "$params"
+}
+
 # Define Masking Presets
 get_theme_data() {
-    local theme=$(get_setting "masking_theme" "analytics")
-    case "$theme" in
-        "analytics")
-            echo "paths:/p/track/event,/v1/collect,/metrics/v2/dispatch|headers:X-Provider:Google-Analytics,Access-Control-Allow-Origin:*|mode:request_response"
-            ;;
-        "infrastructure")
-            echo "paths:/api/v1/report/crash,/sys/logs/bulk,/telemetry/agent/sync|headers:X-Sentry-Auth:redacted,X-Datadog-Trace-Id:redacted|mode:request_response"
-            ;;
-        "cdn_sync")
-            echo "paths:/storage/v2/sync,/media/origin/push,/cdn/worker/runtime|headers:X-Amz-Cf-Id:redacted,X-Edge-Origin-Shield:active|mode:streaming"
-            ;;
-        "security")
-            echo "paths:/security/report/csp,/.well-known/security/audit,/policy/v1/check|headers:X-Security-Audit:compliant|mode:auto"
-            ;;
-        *)
-            # Fallback to analytics
-            echo "paths:/p/track/event,/v1/collect,/metrics/v2/dispatch|headers:X-Provider:Google-Analytics,Access-Control-Allow-Origin:*|mode:request_response"
-            ;;
-    esac
+    # Exclusive Theme: CDN Sync (AWS CloudFront/S3 style)
+    echo "paths:/storage/v2/sync,/media/origin/push,/cdn/worker/runtime|headers:X-Amz-Cf-Id:redacted,X-Edge-Origin-Shield:active|mode:streaming|fallback:aws.amazon.com"
 }
 
 # Get value from settings.json

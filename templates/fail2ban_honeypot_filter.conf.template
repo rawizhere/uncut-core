@@ -1,0 +1,5 @@
+[Definition]
+# Filter for instant ban honey pot paths (returns 444 or has X-Honey-Pot header)
+failregex = ^<HOST> -.* "(GET|POST|HEAD) .*" 444 .*$
+            ^<HOST> -.* "(GET|POST|HEAD) .*" 403 .* ".*" ".*" "active"$
+ignoreregex =

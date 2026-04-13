@@ -40,7 +40,7 @@ show_menu() {
     echo " 5) Remove Client    9) Remove Proto     13) Restart"
     echo " 6) List Clients    10) List Protos      14) Stop"
     echo " 7) Get Links       11) Change SNI       15) Show logs        16) Toggle auto-update"
-    echo " 17) Masking preset"
+    echo " 17) Rotate Proxy Salt (Nginx Masking)"
     echo " 18) Change sing-box version"
     echo " 19) MTProto"
     echo " 20) Edit Client"
@@ -49,34 +49,8 @@ show_menu() {
     echo "------------------------------------------------------------"
 }
 
-masking_settings_menu() {
-    while true; do
-        echo ""
-        echo "=== Masking Settings (v10) ==="
-        echo "Current Theme: $(get_setting "masking_theme" "analytics")"
-        echo "Current Salt:  $(get_setting "protocol_salt")"
-        echo ""
-        echo "1) Theme: Analytics (Google-like)"
-        echo "2) Theme: Infrastructure (Sentry/Datadog-like)"
-        echo "3) Theme: CDN Sync (AWS-like)"
-        echo "4) Theme: Security (Enterprise-like)"
-        echo "5) Rotate Global Salt (Affects Nginx regex)"
-        echo "0) Back"
-        echo ""
-        read -p "Your choice: " mchoice
-        
-        case "$mchoice" in
-            1) set_setting "masking_theme" "analytics"; apply_masking_changes ;;
-            2) set_setting "masking_theme" "infrastructure"; apply_masking_changes ;;
-            3) set_setting "masking_theme" "cdn_sync"; apply_masking_changes ;;
-            4) set_setting "masking_theme" "security"; apply_masking_changes ;;
-            5) rotate_masking_salt ;;
-            0) break ;;
-            *) print_error "Invalid choice" ;;
-        esac
-    done
-}
-
+# Masking preset is now just rotate_masking_salt
+# since AWS CloudFront is the exclusive theme
 rotate_masking_salt() {
     local new_salt=$(openssl rand -hex 4)
     set_setting "protocol_salt" "$new_salt"

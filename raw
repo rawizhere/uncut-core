@@ -19,6 +19,7 @@ source "$SCRIPT_DIR/modules/singbox.sh"
 source "$SCRIPT_DIR/modules/protocols.sh"
 source "$SCRIPT_DIR/modules/users.sh"
 source "$SCRIPT_DIR/modules/mtproto.sh"
+source "$SCRIPT_DIR/modules/shadowtls.sh"
 
 # Setup Trap
 trap 'echo -e "\n${YELLOW}Exiting...${NC}"; exit 0' INT TERM
@@ -63,7 +64,7 @@ main() {
             14) stop_service ;;
             15) show_logs ;;
             16) toggle_auto_update ;;
-            17) masking_settings_menu ;;
+            17) rotate_masking_salt ;;
             18) change_singbox_version ;;
             19) mtproto_menu ;;
             20) edit_client ;;

@@ -1,0 +1,9 @@
+[nginx-honeypot]
+enabled = true
+port = http,https
+filter = nginx-honeypot
+logpath = /var/log/nginx/access.log
+maxretry = 1
+findtime = 3600
+bantime = 86400
+action = %(action_mwl)s
