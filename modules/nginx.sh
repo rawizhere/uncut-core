@@ -127,8 +127,9 @@ generate_nginx_masking_block() {
     for hp in "${honeypots[@]}"; do
         blocks+="    location = $hp {\n"
         blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
-        blocks+="        add_header X-Honey-Pot \"active\" always;\n"
-        blocks+="        return 444;\n"
+        blocks+="        add_header x-amz-request-id \"\$request_id\" always;\n"
+        blocks+="        default_type application/xml;\n"
+        blocks+="        return 403 '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<Error>\\n    <Code>AccessDenied</Code>\\n    <Message>Access Denied</Message>\\n    <RequestId>$AWS_REQ_ID</RequestId>\\n    <HostId>$HOST_ID</HostId>\\n    <Resource>$hp</Resource>\\n</Error>';\n"
         blocks+="    }\n\n"
     done
 

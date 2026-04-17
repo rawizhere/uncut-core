@@ -43,6 +43,36 @@ chmod +x "$INSTALL_DIR/modules/"*.sh
 # Symlink
 ln -sf "$INSTALL_DIR/raw" /usr/local/bin/raw
 
+# Setup Noise Generator Service
+echo "Setting up Noise Generator service..."
+cat > /etc/systemd/system/uncut-noise.service <<EOF
+[Unit]
+Description=Uncut Core Traffic Blending Noise Generator
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash $INSTALL_DIR/modules/noise.sh
+User=root
+EOF
+
+cat > /etc/systemd/system/uncut-noise.timer <<EOF
+[Unit]
+Description=Run Uncut Core Noise Generator periodically
+
+[Timer]
+OnBootSec=1m
+OnUnitActiveSec=5m
+RandomizedDelaySec=2m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now uncut-noise.timer >/dev/null 2>&1 || true
+
 echo -e "${GREEN}Installation complete!${NC}"
 echo "Run 'raw' to start."
 

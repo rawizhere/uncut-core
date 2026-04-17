@@ -48,7 +48,7 @@ generate_xhttp_stealth_link() {
     local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
     
     local dpi_params=$(get_dpi_link_params)
-    echo "vless://${uuid}@${domain}:443?type=xhttp&security=tls&path=${encoded_path}&encryption=none&mode=auto&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-stealth-${country}"
+    echo "vless://${uuid}@${domain}:443?type=xhttp&security=tls&path=${encoded_path}&encryption=none&mode=stream-up&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-stealth-${country}"
 }
 
 generate_hysteria2_link() {
@@ -68,7 +68,7 @@ generate_xhttp_link() {
     local domain=$(get_setting "domain")
     local country=$(get_setting "country")
     local dpi_params=$(get_dpi_link_params)
-    echo "vless://${uuid}@${domain}:2053?type=xhttp&security=tls&path=%2F&encryption=none&mode=auto&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-${country}"
+    echo "vless://${uuid}@${domain}:2053?type=xhttp&security=tls&path=%2F&encryption=none&mode=stream-up&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-${country}"
 }
 
 generate_xhttp_reality_link() {
@@ -80,7 +80,7 @@ generate_xhttp_reality_link() {
     local public_key=$(get_setting "reality_public_key")
     local short_id=$(get_setting "reality_short_id")
     local dpi_params=$(get_dpi_link_params)
-    echo "vless://${uuid}@${domain}:8443?type=xhttp&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&mode=auto&host=${sni}${dpi_params}#${name}-xhttp-reality-${country}"
+    echo "vless://${uuid}@${domain}:8443?type=xhttp&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&mode=stream-up&host=${sni}${dpi_params}#${name}-xhttp-reality-${country}"
 }
 
 generate_tuic_link() {

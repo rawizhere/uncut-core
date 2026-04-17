@@ -44,8 +44,10 @@ generate_xhttp_stealth_inbound() {
   "transport": {
     "type": "xhttp",
     "path": "$salted_path",
-    "mode": "auto",
+    "mode": "stream-up",
     "x_padding_bytes": "100-2500",
+    "no_sse_header": false,
+    "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   }
@@ -150,8 +152,10 @@ generate_xhttp_inbound() {
   "transport": {
     "type": "xhttp",
     "path": "/",
-    "mode": "auto",
+    "mode": "stream-up",
     "x_padding_bytes": "$padding_range",
+    "no_sse_header": false,
+    "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   },
@@ -187,8 +191,10 @@ generate_xhttp_reality_inbound() {
   "transport": {
     "type": "xhttp",
     "path": "/",
-    "mode": "auto",
+    "mode": "stream-up",
     "x_padding_bytes": "100-2500",
+    "no_sse_header": false,
+    "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   },
