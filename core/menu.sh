@@ -24,9 +24,22 @@ show_menu() {
         local client_count=$(jq 'length' "$CLIENTS_FILE" 2>/dev/null || echo "0")
         local auto_update=$(get_setting "auto_update" "false")
         
+        local ssl_info="${RED}Not found${NC}"
+        if [[ -n "$domain" ]]; then
+            local cert_file="$INSTALL_DIR/certs/certificates/$domain.crt"
+            if [[ -f "$cert_file" ]]; then
+                local expiry_date=$(openssl x509 -in "$cert_file" -noout -enddate | cut -d= -f2)
+                if is_cert_valid "$cert_file"; then
+                    ssl_info="${GREEN}${expiry_date}${NC}"
+                else
+                    ssl_info="${RED}${expiry_date} (Expired/Renew Soon)${NC}"
+                fi
+            fi
+        fi
+        
         echo -e "Status: Sing-box: $sb_status | Nginx: $nx_status"
         echo -e "System: CPU: $cpu_usage | RAM: $ram_usage | Uptime: $uptime_val"
-        echo -e "Server: IP: $server_ip | Domain: ${domain:-None}"
+        echo -e "Server: IP: $server_ip | Domain: ${domain:-None} | SSL: $ssl_info"
         echo -e "Config: Protocols: $protocol_count | Clients: $client_count | Auto-update: $auto_update"
     else
         echo -e "Status: ${YELLOW}Not installed${NC}"
@@ -44,6 +57,7 @@ show_menu() {
     echo " 18) Change sing-box version"
     echo " 19) MTProto"
     echo " 20) Edit Client"
+    echo " 21) Fix/Renew SSL"
     echo ""
     echo " 0) Exit"
     echo "------------------------------------------------------------"

@@ -68,6 +68,7 @@ main() {
             18) change_singbox_version ;;
             19) mtproto_menu ;;
             20) edit_client ;;
+            21) install_acme_sh --force ;;
             0) exit 0 ;;
             *) [[ -n "$choice" ]] && print_error "Invalid choice" ;;
         esac
