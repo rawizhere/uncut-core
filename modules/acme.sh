@@ -51,13 +51,17 @@ install_acme_sh() {
         fi
     fi
     
+    # Ensure acme.sh is using Let's Encrypt (ZeroSSL is flaky)
+    /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
+
     # Issue certificate
     print_info "Issuing SSL certificate via Webroot (Zero Downtime)..."
     
     mkdir -p "$INSTALL_DIR/certs/certificates"
     mkdir -p "/var/www/html"
 
-    if /root/.acme.sh/acme.sh --issue --webroot /var/www/html -d "$domain" --force; then
+    # We use --webroot so Nginx doesn't need to be stopped
+    if /root/.acme.sh/acme.sh --issue --webroot /var/www/html -d "$domain" --server letsencrypt --force; then
         print_success "Certificate issued"
         
         # Install certificate
