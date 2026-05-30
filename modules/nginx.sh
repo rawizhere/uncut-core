@@ -301,7 +301,8 @@ server {
     ssl_certificate $INSTALL_DIR/certs/certificates/$DOMAIN.crt;
     ssl_certificate_key $INSTALL_DIR/certs/certificates/$DOMAIN.key;
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
 
     # CDN-like headers (base)
     include /etc/nginx/snippets/cdn_headers.conf;
@@ -312,7 +313,6 @@ server {
 
     # Subscriptions (Classic Path)
     location ~ "^/([a-f0-9]{32})$" {
-        include /etc/nginx/snippets/cdn_headers.conf;
         alias /var/www/cdn/subs/\$1;
         default_type "application/octet-stream";
         add_header Content-Disposition "inline";
@@ -320,7 +320,6 @@ server {
 
     # Subscriptions (CDN Masked Path: Asset Injection Style)
     location ~ "^/static/v1/auth/([a-f0-9]{32})\.bin$" {
-        include /etc/nginx/snippets/cdn_headers.conf;
         alias /var/www/cdn/subs/\$1;
         default_type "application/octet-stream";
         add_header Content-Disposition "inline";
