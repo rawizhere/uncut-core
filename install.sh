@@ -1,10 +1,12 @@
 #!/bin/bash
 
 # Uncut Core Installer
-# curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash
+# Interactive: curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash
+# Unattended:  curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- --domain node1.domain.com --email admin@domain.com --clients "alice,bob"
 
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'
+export YELLOW='\033[1;33m'
 export NC='\033[0m'
 
 if [[ $EUID -ne 0 ]]; then
@@ -12,27 +14,52 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-echo -e "${GREEN}Installing Uncut Core...${NC}"
+# Parse CLI arguments
+export UNATTENDED=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --domain) export DOMAIN="$2"; shift 2 ;;
+        --email) export EMAIL="$2"; shift 2 ;;
+        --sni) export SNI="$2"; shift 2 ;;
+        --country) export COUNTRY="$2"; shift 2 ;;
+        --protocols) export PROTOCOLS="$2"; shift 2 ;;
+        --clients) export CLIENTS="$2"; shift 2 ;;
+        --auto) export UNATTENDED=true; shift ;;
+        *) shift ;;
+    esac
+done
 
-# Install git if missing
-if ! command -v git &> /dev/null; then
-    apt-get update -qq
-    apt-get install -y git -qq
+if [[ -n "$DOMAIN" && -n "$EMAIL" ]]; then
+    export UNATTENDED=true
 fi
 
-INSTALL_DIR="/opt/sing-box"
+echo -e "${GREEN}Installing Uncut Core...${NC}"
 
-if [[ -d "$INSTALL_DIR" ]]; then
-    echo "Updating existing installation and migrating repo..."
-    cd "$INSTALL_DIR"
-    git remote set-url origin https://github.com/rawizhere/uncut-core.git
-    git fetch --all >/dev/null 2>&1
-    git reset --hard origin/main >/dev/null 2>&1
-    # Cleanup old binary if exists
-    [[ -f "proxiii" ]] && rm "proxiii"
+INSTALL_DIR="/opt/sing-box"
+mkdir -p "$INSTALL_DIR"
+
+if command -v git &> /dev/null; then
+    if [[ -d "$INSTALL_DIR/.git" ]]; then
+        echo "Updating existing installation via Git..."
+        cd "$INSTALL_DIR"
+        git remote set-url origin https://github.com/rawizhere/uncut-core.git
+        git fetch --all >/dev/null 2>&1
+        git reset --hard origin/main >/dev/null 2>&1
+    else
+        echo "Cloning repository via Git..."
+        git clone -q https://github.com/rawizhere/uncut-core.git "$INSTALL_DIR"
+    fi
 else
-    echo "Cloning repository..."
-    git clone -q https://github.com/rawizhere/uncut-core.git "$INSTALL_DIR"
+    echo "Git not found, downloading release tarball..."
+    tmp_tar=$(mktemp)
+    if curl -sL https://github.com/rawizhere/uncut-core/archive/refs/heads/main.tar.gz -o "$tmp_tar"; then
+        tar -xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1
+        rm -f "$tmp_tar"
+    else
+        echo -e "${RED}Failed to download repository tarball. Installing git...${NC}"
+        apt-get update -qq && apt-get install -y git -qq
+        git clone -q https://github.com/rawizhere/uncut-core.git "$INSTALL_DIR"
+    fi
 fi
 
 # Permissions
@@ -73,8 +100,13 @@ EOF
 systemctl daemon-reload
 systemctl enable --now uncut-noise.timer >/dev/null 2>&1 || true
 
-echo -e "${GREEN}Installation complete!${NC}"
-echo "Run 'raw' to start."
+echo -e "${GREEN}Installation files updated!${NC}"
 
-# Auto-start with terminal connection to avoid infinite loop when piped
-exec raw </dev/tty
+if [[ "$UNATTENDED" == "true" ]]; then
+    echo -e "${YELLOW}Starting unattended installation...${NC}"
+    raw --auto
+else
+    echo "Run 'raw' to start interactive menu."
+    # Auto-start with terminal connection to avoid infinite loop when piped
+    exec raw </dev/tty
+fi

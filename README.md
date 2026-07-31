@@ -18,8 +18,16 @@ Server seamlessly disguises as an AWS CloudFront backend/edge node. Features dee
 
 ### Install
 
+Interactive:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash
+```
+
+Unattended:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- --domain domain.com --email email@site.com --clients "user1,user2"
 ```
 
 ### Usage
@@ -35,9 +43,9 @@ raw
 ├── core/        # Logic
 ├── modules/     # Acme, Nginx, Engine
 ├── templates/   # Configs
-├── data/        # Binaries
 ├── raw          # Entry point
 └── install.sh   # Installer
 ```
+
 
 

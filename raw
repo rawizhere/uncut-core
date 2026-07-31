@@ -40,6 +40,17 @@ main() {
     check_script_updates
     migrate_clients_to_v2
     
+    # Handle Unattended Mode
+    if [[ "$1" == "--auto" || "$UNATTENDED" == "true" ]]; then
+        if ! is_installed; then
+            install_singbox
+        else
+            print_info "Sing-box is already installed. Running system migration..."
+            run_system_migration
+        fi
+        exit 0
+    fi
+    
     while true; do
         show_menu
         if ! read -p "Your choice: " choice; then

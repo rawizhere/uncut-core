@@ -225,36 +225,55 @@ install_singbox() {
         return
     fi
     
-    # Request data
-    while true; do
-        read -p "Enter domain: " domain
-        if validate_domain "$domain"; then
-            # Check DNS
-            if check_domain_dns "$domain"; then
-                break
-            fi
-        else
-            print_error "Invalid domain"
-        fi
-    done
-    
-    while true; do
-        read -p "Enter email: " email
-        if [[ "$email" =~ ^[^@]+@[^@]+$ ]]; then
-            break
-        else
-            print_error "Invalid email"
-        fi
-    done
-    
-    read -p "Enter country code: " country
-    
-    # SNI with default value
+    local domain="$DOMAIN"
+    local email="$EMAIL"
+    local country="${COUNTRY:-US}"
     local default_sni="www.microsoft.com"
-    echo "Recommended SNI list:"
-    echo "https://github.com/YukiKras/vless-wizard/blob/main/sni.txt"
-    read -p "Enter SNI for Reality [$default_sni]: " sni
-    sni=${sni:-$default_sni}
+    local sni="${SNI:-$default_sni}"
+
+    if [[ -z "$domain" ]]; then
+        while true; do
+            read -p "Enter domain: " domain
+            if validate_domain "$domain"; then
+                if check_domain_dns "$domain"; then
+                    break
+                fi
+            else
+                print_error "Invalid domain"
+            fi
+        done
+    else
+        print_info "Using provided domain: $domain"
+        if ! validate_domain "$domain"; then
+            print_error "Invalid domain provided in environment: $domain"
+            return 1
+        fi
+    fi
+
+    if [[ -z "$email" ]]; then
+        while true; do
+            read -p "Enter email: " email
+            if [[ "$email" =~ ^[^@]+@[^@]+$ ]]; then
+                break
+            else
+                print_error "Invalid email"
+            fi
+        done
+    else
+        print_info "Using provided email: $email"
+    fi
+
+    if [[ -z "$COUNTRY" ]]; then
+        read -p "Enter country code [US]: " input_country
+        country="${input_country:-US}"
+    fi
+
+    if [[ -z "$SNI" ]]; then
+        echo "Recommended SNI list:"
+        echo "https://github.com/YukiKras/vless-wizard/blob/main/sni.txt"
+        read -p "Enter SNI for Reality [$default_sni]: " input_sni
+        sni=${input_sni:-$default_sni}
+    fi
     
     echo ""
     
@@ -322,16 +341,22 @@ EOF
     print_success "Certificates generated (Real or Self-signed fallback)"
     echo ""
     
-    # Add default protocols automatically for a better "out-of-the-box" experience
-    print_info "Adding default secure protocols (Hysteria2 & XHTTP-Stealth)..."
-    
-    # Check if they exist before adding (using protocol_exists from config.sh)
-    if ! protocol_exists "hysteria2"; then
-        add_protocol_logic "hysteria2"
-    fi
-    
-    if ! protocol_exists "xhttp-stealth"; then
-        add_protocol_logic "xhttp-stealth"
+    # Add default protocols or requested protocols
+    if [[ -n "$PROTOCOLS" ]]; then
+        print_info "Configuring requested protocols: $PROTOCOLS..."
+        IFS=',' read -ra proto_arr <<< "$PROTOCOLS"
+        for p in "${proto_arr[@]}"; do
+            p=$(echo "$p" | tr -d ' ')
+            [[ -n "$p" ]] && add_protocol_logic "$p"
+        done
+    else
+        print_info "Adding default secure protocols (Hysteria2 & XHTTP-Stealth)..."
+        if ! protocol_exists "hysteria2"; then
+            add_protocol_logic "hysteria2"
+        fi
+        if ! protocol_exists "xhttp-stealth"; then
+            add_protocol_logic "xhttp-stealth"
+        fi
     fi
     
     rebuild_config
@@ -345,8 +370,39 @@ EOF
     else
         print_success "Nginx configured and running"
     fi
+
+    # Create initial clients if specified
+    if [[ -n "$CLIENTS" ]]; then
+        print_info "Creating initial clients: $CLIENTS..."
+        IFS=',' read -ra client_arr <<< "$CLIENTS"
+        for c in "${client_arr[@]}"; do
+            c=$(echo "$c" | tr -d ' ')
+            if [[ -n "$c" ]] && validate_client_name "$c" && ! client_exists "$c"; then
+                local uuid=$(generate_uuid)
+                local password=$(generate_password)
+                local sub_hash=$(generate_client_hash "$uuid")
+                local active_protos=$(get_protocols | jq -R . | jq -s .)
+                
+                local new_client=$(jq -n \
+                    --arg name "$c" \
+                    --arg uuid "$uuid" \
+                    --arg password "$password" \
+                    --arg sub_hash "$sub_hash" \
+                    --argjson protocols "$active_protos" \
+                    '{name: $name, uuid: $uuid, password: $password, sub_hash: $sub_hash, protocols: $protocols}')
+                    
+                local tmp=$(mktemp)
+                jq --argjson new_client "$new_client" '. += [$new_client]' "$CLIENTS_FILE" > "$tmp"
+                mv "$tmp" "$CLIENTS_FILE"
+                
+                generate_subscription_file "$c" "$uuid" "$password" "$sub_hash" "$active_protos"
+                print_success "Client '$c' created. Subscription: https://${domain}/${sub_hash}"
+            fi
+        done
+        rebuild_config
+    fi
     
-    print_success "Installation complete with Hysteria2 & XHTTP-Stealth protocols!"
+    print_success "Installation complete!"
     echo ""
     read -p "Do you want to add more protocols now? y/n: " add_now
     if [[ "$add_now" == "y" ]]; then
