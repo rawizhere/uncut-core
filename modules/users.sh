@@ -111,6 +111,35 @@ generate_socks_link() {
     
     echo "socks5://${name}:${password}@${domain}:52144#${name}-socks-${country}"
 }
+
+generate_sudoku_link() {
+    local name=$1
+    local domain=$(get_setting "domain")
+    local country=$(get_setting "country")
+    local sudoku_key=$(get_setting "sudoku_key")
+    
+    echo "sudoku://${sudoku_key}@${domain}:8551?aead_method=chacha20-poly1305&table_type=prefer_entropy#${name}-sudoku-${country}"
+}
+
+generate_trusttunnel_link() {
+    local name=$1
+    local password=$2
+    local domain=$(get_setting "domain")
+    local country=$(get_setting "country")
+    
+    echo "trusttunnel://${name}:${password}@${domain}:8553?alpn=h2,h3#${name}-trusttunnel-${country}"
+}
+
+generate_snell_link() {
+    local name=$1
+    local domain=$(get_setting "domain")
+    local country=$(get_setting "country")
+    local sni=$(get_setting "sni" "$domain")
+    local snell_psk=$(get_setting "snell_psk")
+    
+    echo "snell://${snell_psk}@${domain}:8554?version=4&obfs=tls&host=${sni}#${name}-snell-${country}"
+}
+
 generate_subscription_file() {
     local name=$1
     local uuid=$2
@@ -183,6 +212,18 @@ generate_subscription_file() {
                     ;;
                 "shadowtls")
                     links+=$(generate_shadowtls_link "$name")
+                    links+=$'\n'
+                    ;;
+                "sudoku")
+                    links+=$(generate_sudoku_link "$name")
+                    links+=$'\n'
+                    ;;
+                "trusttunnel")
+                    links+=$(generate_trusttunnel_link "$name" "$password")
+                    links+=$'\n'
+                    ;;
+                "snell")
+                    links+=$(generate_snell_link "$name")
                     links+=$'\n'
                     ;;
             esac
@@ -277,6 +318,18 @@ rebuild_config() {
             "shadowtls")
                 local shadowtls_inbound=$(generate_shadowtls_inbound)
                 inbounds=$(echo "$inbounds" | jq --argjson inbound "$shadowtls_inbound" '. += [$inbound]')
+                ;;
+            "sudoku")
+                local sudoku_inbound=$(generate_sudoku_inbound)
+                inbounds=$(echo "$inbounds" | jq --argjson inbound "$sudoku_inbound" '. += [$inbound]')
+                ;;
+            "trusttunnel")
+                local trusttunnel_inbound=$(generate_trusttunnel_inbound)
+                inbounds=$(echo "$inbounds" | jq --argjson inbound "$trusttunnel_inbound" '. += [$inbound]')
+                ;;
+            "snell")
+                local snell_inbound=$(generate_snell_inbound)
+                inbounds=$(echo "$inbounds" | jq --argjson inbound "$snell_inbound" '. += [$inbound]')
                 ;;
         esac
     done < <(get_protocols)

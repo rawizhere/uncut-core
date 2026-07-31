@@ -30,6 +30,10 @@ init_settings() {
     [[ -z $(get_setting "dpi_fragment_enabled") ]] && set_setting "dpi_fragment_enabled" "true"
     [[ -z $(get_setting "dpi_hello_padding_enabled") ]] && set_setting "dpi_hello_padding_enabled" "true"
     
+    # Protocol Keys Initialization
+    [[ -z $(get_setting "sudoku_key") ]] && set_setting "sudoku_key" "$(openssl rand -hex 16)"
+    [[ -z $(get_setting "snell_psk") ]] && set_setting "snell_psk" "$(openssl rand -hex 16)"
+
     set_setting "traffic_shaping_level" "high"
     set_setting "shadow_tls_enabled" "false"
     

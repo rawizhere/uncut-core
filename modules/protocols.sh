@@ -20,7 +20,9 @@ generate_vless_ws_inbound() {
     "path": "$salted_path",
     "max_early_data": 0,
     "early_data_header_name": "Sec-WebSocket-Protocol"
-  }
+  },
+  "sniff": true,
+  "sniff_override_destination": true
 }
 EOF
 }
@@ -41,6 +43,7 @@ generate_xhttp_stealth_inbound() {
   "listen": "127.0.0.1",
   "listen_port": 10002,
   "users": $users,
+  "trusted_x_forwarded_for": ["127.0.0.1"],
   "transport": {
     "type": "xhttp",
     "path": "$salted_path",
@@ -50,7 +53,9 @@ generate_xhttp_stealth_inbound() {
     "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
-  }
+  },
+  "sniff": true,
+  "sniff_override_destination": true
 }
 EOF
 }
@@ -60,7 +65,6 @@ generate_vless_reality_inbound() {
     local private_key=$(get_setting "reality_private_key")
     local short_id=$(get_setting "reality_short_id")
     
-    # Get client list
     local users=$(jq -c '[.[] | select(.protocols[]? == "vless-reality") | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     local padding_json=""
@@ -88,7 +92,9 @@ generate_vless_reality_inbound() {
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
     }${padding_json}
-  }
+  },
+  "sniff": true,
+  "sniff_override_destination": true
 }
 EOF
 }
@@ -97,7 +103,6 @@ generate_hysteria2_inbound() {
     local domain=$(get_setting "domain")
     local obfs_password=$(get_setting "hysteria_obfs_password")
     
-    # Get client list (password is used for hysteria2)
     local users=$(jq -c '[.[] | select(.protocols[]? == "hysteria2") | {password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     local padding_json=""
@@ -112,7 +117,8 @@ generate_hysteria2_inbound() {
   "listen": "0.0.0.0",
   "listen_port": 8443,
   "users": $users,
-  "masquerade": "https://1.1.1.1",
+  "masquerade": "https://127.0.0.1:443",
+  "ignore_client_bandwidth": true,
   "obfs": {
     "type": "salamander",
     "password": "$obfs_password"
@@ -122,7 +128,9 @@ generate_hysteria2_inbound() {
     "alpn": ["h3"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
-  }
+  },
+  "sniff": true,
+  "sniff_override_destination": true
 }
 EOF
 }
@@ -157,14 +165,18 @@ generate_xhttp_inbound() {
     "no_sse_header": false,
     "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
-    "sc_stream_up_server_secs": "20-80"
+    "sc_stream_up_server_secs": "20-80",
+    "congestion_controller": "bbr",
+    "cwnd": 32
   },
   "tls": {
     "enabled": true,
-    "alpn": ["h2", "http/1.1"],
+    "alpn": ["h3", "h2", "http/1.1"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
-  }
+  },
+  "sniff": true,
+  "sniff_override_destination": true
 }
 EOF
 }
@@ -196,7 +208,9 @@ generate_xhttp_reality_inbound() {
     "no_sse_header": false,
     "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
-    "sc_stream_up_server_secs": "20-80"
+    "sc_stream_up_server_secs": "20-80",
+    "congestion_controller": "bbr",
+    "cwnd": 32
   },
   "tls": {
     "enabled": true,
@@ -211,7 +225,83 @@ generate_xhttp_reality_inbound() {
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
     }${padding_json}
-  }
+  },
+  "sniff": true,
+  "sniff_override_destination": true
+}
+EOF
+}
+
+generate_sudoku_inbound() {
+    local sudoku_key=$(get_setting "sudoku_key")
+    if [[ -z "$sudoku_key" ]]; then
+        sudoku_key=$(openssl rand -hex 16)
+        set_setting "sudoku_key" "$sudoku_key"
+    fi
+
+    cat <<EOF
+{
+  "type": "sudoku",
+  "tag": "sudoku-in",
+  "listen": "0.0.0.0",
+  "listen_port": 8551,
+  "key": "$sudoku_key",
+  "aead_method": "chacha20-poly1305",
+  "table_type": "prefer_entropy",
+  "sniff": true,
+  "sniff_override_destination": true
+}
+EOF
+}
+
+generate_trusttunnel_inbound() {
+    local domain=$(get_setting "domain")
+    local users=$(jq -c '[.[] | select(.protocols[]? == "trusttunnel") | {name: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+
+    cat <<EOF
+{
+  "type": "trusttunnel",
+  "tag": "trusttunnel-in",
+  "listen": "0.0.0.0",
+  "listen_port": 8553,
+  "users": $users,
+  "congestion_controller": "bbr",
+  "cwnd": 32,
+  "tls": {
+    "enabled": true,
+    "alpn": ["h2", "h3"],
+    "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
+    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
+  },
+  "sniff": true,
+  "sniff_override_destination": true
+}
+EOF
+}
+
+generate_snell_inbound() {
+    local sni=$(get_setting "sni")
+    local snell_psk=$(get_setting "snell_psk")
+    if [[ -z "$snell_psk" ]]; then
+        snell_psk=$(openssl rand -hex 16)
+        set_setting "snell_psk" "$snell_psk"
+    fi
+
+    cat <<EOF
+{
+  "type": "snell",
+  "tag": "snell-in",
+  "listen": "0.0.0.0",
+  "listen_port": 8554,
+  "psk": "$snell_psk",
+  "version": 4,
+  "network": ["tcp", "udp"],
+  "obfs": {
+    "mode": "tls",
+    "host": "$sni"
+  },
+  "sniff": true,
+  "sniff_override_destination": true
 }
 EOF
 }
@@ -286,7 +376,7 @@ add_protocol_logic() {
 
     [[ "$protocol" == "vless-reality" || "$protocol" == "xhttp-reality" ]] && needs_reality=true
     [[ "$protocol" == "hysteria2" ]] && needs_hysteria=true
-    [[ "$protocol" == "hysteria2" || "$protocol" == "xhttp" || "$protocol" == "tuic" ]] && needs_tls=true
+    [[ "$protocol" == "hysteria2" || "$protocol" == "xhttp" || "$protocol" == "tuic" || "$protocol" == "trusttunnel" ]] && needs_tls=true
 
     # Check and generate necessary data
     if [[ "$needs_reality" == true ]]; then
@@ -307,15 +397,25 @@ add_protocol_logic() {
         local obfs_password=$(generate_obfs_password)
         set_setting "hysteria_obfs_password" "$obfs_password"
     fi
+
+    if [[ "$protocol" == "sudoku" ]]; then
+        if [[ -z "$(get_setting "sudoku_key")" ]]; then
+            set_setting "sudoku_key" "$(openssl rand -hex 16)"
+        fi
+    fi
+
+    if [[ "$protocol" == "snell" ]]; then
+        if [[ -z "$(get_setting "snell_psk")" ]]; then
+            set_setting "snell_psk" "$(openssl rand -hex 16)"
+        fi
+    fi
     
     # Ensure certificates exist for TLS protocols
     if [[ "$needs_tls" == true ]]; then
         print_info "Checking certificates for $protocol..."
-        # Calls installed acme module function
         if command -v install_acme_sh &>/dev/null; then
             install_acme_sh
         else
-            # fallback or error implies source order issues
             print_error "ACME module not loaded"
         fi
     fi
@@ -348,7 +448,10 @@ add_protocol() {
     echo "8) HTTP                 (TCP :52143)"
     echo "9) SOCKS5               (TCP :52144)"
     echo "10) ShadowTLS v3        (TCP :8444)"
-    echo "11) Create all protocols"
+    echo "11) Sudoku              (TCP :8551)"
+    echo "12) TrustTunnel         (TCP :8553)"
+    echo "13) Snell v4            (TCP :8554)"
+    echo "14) Create all protocols"
     echo "0) Back"
     echo ""
     
@@ -358,9 +461,9 @@ add_protocol() {
         return
     fi
 
-    if [[ "$choice" == "11" ]]; then
+    if [[ "$choice" == "14" ]]; then
         print_info "Adding all protocols..."
-        local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls")
+        local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
         for p in "${all_protos[@]}"; do
             if ! protocol_exists "$p"; then
                 add_protocol_logic "$p"
@@ -384,6 +487,9 @@ add_protocol() {
         8) protocol="http" ;;
         9) protocol="socks" ;;
         10) protocol="shadowtls" ;;
+        11) protocol="sudoku" ;;
+        12) protocol="trusttunnel" ;;
+        13) protocol="snell" ;;
         *)
             print_error "Invalid choice"
             return
@@ -532,6 +638,15 @@ list_protocols() {
                     ;;
                 "shadowtls")
                     echo "  • ShadowTLS v3 (:8444)"
+                    ;;
+                "sudoku")
+                    echo "  • Sudoku (:8551)"
+                    ;;
+                "trusttunnel")
+                    echo "  • TrustTunnel (:8553)"
+                    ;;
+                "snell")
+                    echo "  • Snell v4 (:8554)"
                     ;;
             esac
         done

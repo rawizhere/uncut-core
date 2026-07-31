@@ -355,6 +355,37 @@ EOF
     echo ""
 }
 
+run_system_migration() {
+    print_info "Running system migration and config optimization..."
+    
+    # Step 1: Create backup
+    local backup_dir="$INSTALL_DIR/backups"
+    mkdir -p "$backup_dir"
+    local backup_tar="$backup_dir/uncut_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
+    print_info "Creating configuration backup at $backup_tar..."
+    tar -czf "$backup_tar" -C "$INSTALL_DIR" settings.json clients.json config.json 2>/dev/null || true
+    
+    # Step 2: Initialize default settings / new protocol keys if missing
+    init_settings
+    
+    # Step 3: Re-apply Nginx config
+    local domain=$(get_setting "domain")
+    if [[ -n "$domain" ]]; then
+        print_info "Updating Nginx configuration..."
+        setup_nginx_cdn "$domain"
+    fi
+    
+    # Step 4: Rebuild sing-box config
+    print_info "Rebuilding sing-box configuration..."
+    rebuild_config
+    
+    # Step 5: Regenerate subscriptions
+    print_info "Regenerating client subscriptions..."
+    regenerate_all_subscriptions
+    
+    print_success "System migration completed successfully"
+}
+
 update_singbox() {
     echo ""
     echo "=== Update Sing-box ==="
@@ -436,17 +467,8 @@ update_singbox() {
         print_info "Sing-box binary is up to date, skipping download."
     fi
     
-    print_info "Restarting services..."
-    
-    # Re-apply Nginx config
-    local domain=$(get_setting "domain")
-    if [[ -n "$domain" ]]; then
-        setup_nginx_cdn "$domain"
-        regenerate_all_subscriptions
-    fi
-    
-    print_info "Rebuilding sing-box config..."
-    rebuild_config
+    # Execute smooth system migration
+    run_system_migration
     
     # Use reload-or-restart for better stability
     print_info "Restarting Sing-box..."

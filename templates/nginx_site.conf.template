@@ -37,7 +37,8 @@ server {
 
 # Default HTTPS server - Close connection for unknown SNI/IP
 server {
-    listen 443 ssl http2 default_server;
+    listen 443 ssl default_server;
+    http2 on;
     server_name _;
     ssl_certificate ${INSTALL_DIR}/certs/certificates/${DOMAIN}.crt;
     ssl_certificate_key ${INSTALL_DIR}/certs/certificates/${DOMAIN}.key;
@@ -46,7 +47,8 @@ server {
 
 # HTTPS server - CDN masking
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;
     server_name ${DOMAIN};
     server_tokens off;
 
