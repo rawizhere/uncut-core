@@ -224,3 +224,78 @@ EOF
     
     print_success "Fail2ban configured (SSH: 5 attempts, Nginx: 10 attempts)"
 }
+
+sync_firewall_ports() {
+    if ! command -v ufw &>/dev/null; then
+        return 0
+    fi
+    
+    local ssh_port=$(get_setting "ssh_port" "22")
+    ufw allow "${ssh_port}/tcp" comment 'SSH' >/dev/null 2>&1
+    ufw allow 80/tcp comment 'HTTP/ACME' >/dev/null 2>&1
+    ufw allow 443/tcp comment 'HTTPS/CDN' >/dev/null 2>&1
+    
+    # Active protocol ports
+    local active_protos=($(get_protocols))
+    for proto in "${active_protos[@]}"; do
+        case "$proto" in
+            "vless-reality") ufw allow 2083/tcp comment 'VLESS Reality' >/dev/null 2>&1 ;;
+            "xhttp") ufw allow 2053/tcp comment 'XHTTP' >/dev/null 2>&1 ;;
+            "xhttp-reality") ufw allow 8443/tcp comment 'XHTTP Reality' >/dev/null 2>&1 ;;
+            "hysteria2") ufw allow 8443/udp comment 'Hysteria2' >/dev/null 2>&1 ;;
+            "tuic") ufw allow 8550/udp comment 'TUIC' >/dev/null 2>&1 ;;
+            "http") ufw allow 52143/tcp comment 'HTTP Proxy' >/dev/null 2>&1 ;;
+            "socks") ufw allow 52144/tcp comment 'SOCKS Proxy' >/dev/null 2>&1 ;;
+            "shadowtls") ufw allow 8444/tcp comment 'ShadowTLS' >/dev/null 2>&1 ;;
+            "sudoku") ufw allow 8551/tcp comment 'Sudoku' >/dev/null 2>&1 ;;
+            "trusttunnel") ufw allow 8553/tcp comment 'TrustTunnel' >/dev/null 2>&1 ;;
+            "snell") ufw allow 8554/tcp comment 'Snell' >/dev/null 2>&1 ;;
+        esac
+    done
+    
+    local mtg_port=$(get_setting "mtg_port")
+    if [[ -n "$mtg_port" ]]; then
+        ufw allow "${mtg_port}/tcp" comment 'MTProto' >/dev/null 2>&1
+    fi
+}
+
+check_system_health() {
+    echo ""
+    echo "=== System Health & Diagnostics ==="
+    echo ""
+    
+    # Check services
+    local sb_active=$(systemctl is-active sing-box 2>/dev/null)
+    local nx_active=$(systemctl is-active nginx 2>/dev/null)
+    local f2b_active=$(systemctl is-active fail2ban 2>/dev/null)
+    
+    [[ "$sb_active" == "active" ]] && echo -e "Sing-box Service: ${GREEN}[OK] Running${NC}" || echo -e "Sing-box Service: ${RED}[FAIL] Stopped${NC}"
+    [[ "$nx_active" == "active" ]] && echo -e "Nginx Service:    ${GREEN}[OK] Running${NC}" || echo -e "Nginx Service:    ${RED}[FAIL] Stopped${NC}"
+    [[ "$f2b_active" == "active" ]] && echo -e "Fail2ban Service: ${GREEN}[OK] Running${NC}" || echo -e "Fail2ban Service: ${YELLOW}[WARN] Stopped${NC}"
+    
+    # Check Domain & SSL
+    local domain=$(get_setting "domain")
+    if [[ -n "$domain" ]]; then
+        local cert_file="$INSTALL_DIR/certs/certificates/$domain.crt"
+        if [[ -f "$cert_file" ]]; then
+            local enddate=$(openssl x509 -in "$cert_file" -noout -enddate | cut -d= -f2)
+            echo -e "SSL Certificate:  ${GREEN}[OK] Valid until $enddate${NC}"
+        else
+            echo -e "SSL Certificate:  ${RED}[FAIL] Certificate file not found${NC}"
+        fi
+    fi
+    
+    # Check File Descriptors Limit (ulimit)
+    local ulimit_val=$(ulimit -n)
+    if [[ "$ulimit_val" -ge 10000 ]]; then
+        echo -e "File Descriptors: ${GREEN}[OK] $ulimit_val${NC}"
+    else
+        echo -e "File Descriptors: ${YELLOW}[WARN] $ulimit_val (Consider increasing ulimit -n)${NC}"
+    fi
+    
+    # Check Disk Space
+    local disk_avail=$(df -h "$INSTALL_DIR" 2>/dev/null | awk 'NR==2 {print $4}')
+    echo -e "Available Disk:   ${GREEN}[OK] ${disk_avail:-unknown}${NC}"
+    
+    echo ""
+}

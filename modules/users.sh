@@ -633,6 +633,21 @@ show_client_links_internal() {
                         generate_shadowtls_link "$name"
                         echo ""
                         ;;
+                    "sudoku")
+                        echo "Sudoku:"
+                        generate_sudoku_link "$name"
+                        echo ""
+                        ;;
+                    "trusttunnel")
+                        echo "TrustTunnel:"
+                        generate_trusttunnel_link "$name" "$password"
+                        echo ""
+                        ;;
+                    "snell")
+                        echo "Snell v4:"
+                        generate_snell_link "$name"
+                        echo ""
+                        ;;
                 esac
             fi
         done
@@ -642,6 +657,12 @@ show_client_links_internal() {
     echo "---"
     echo "Subscription URL:"
     echo "$sub_url"
+    echo ""
+    if command -v qrencode &>/dev/null; then
+        echo "Scan QR Code for Subscription:"
+        qrencode -t UTF8 "$sub_url"
+        echo ""
+    fi
 }
 
 show_client_links() {

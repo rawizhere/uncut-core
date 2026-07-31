@@ -59,27 +59,26 @@ main() {
         fi
         
         case "$choice" in
-            1) install_singbox ;;
-            2) update_singbox ;;
-            3) uninstall_singbox ;;
-            4) add_client ;;
-            5) remove_client ;;
-            6) list_clients ;;
-            7) show_client_links ;;
-            8) add_protocol ;;
-            9) remove_protocol ;;
-            10) list_protocols ;;
-            11) change_sni ;;
-            12) show_status ;;
-            13) restart_service ;;
-            14) stop_service ;;
-            15) show_logs ;;
-            16) toggle_auto_update ;;
-            17) rotate_masking_salt ;;
+            1) add_client ;;
+            2) edit_client ;;
+            3) remove_client ;;
+            4) list_clients ;;
+            5) show_client_links ;;
+            6) add_protocol ;;
+            7) remove_protocol ;;
+            8) list_protocols ;;
+            9) change_sni ;;
+            10) rotate_masking_salt ;;
+            11) check_system_health ;;
+            12) restart_service ;;
+            13) show_logs ;;
+            14) install_acme_sh --force ;;
+            15) mtproto_menu ;;
+            16) update_singbox ;;
+            17) toggle_auto_update ;;
             18) change_singbox_version ;;
-            19) mtproto_menu ;;
-            20) edit_client ;;
-            21) install_acme_sh --force ;;
+            19) install_singbox ;;
+            20) uninstall_singbox ;;
             0) exit 0 ;;
             *) [[ -n "$choice" ]] && print_error "Invalid choice" ;;
         esac

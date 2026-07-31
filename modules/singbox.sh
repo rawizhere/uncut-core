@@ -203,7 +203,7 @@ install_dependencies() {
     print_info "Installing dependencies..."
     DEBIAN_FRONTEND=noninteractive apt-get update -qq
     # Install all required packages including dnsutils for dig command
-    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" curl jq openssl socat nginx gettext-base dnsutils; then
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" curl jq openssl socat nginx gettext-base dnsutils qrencode; then
         print_error "Failed to install dependencies. Please check your internet connection or apt-get logs."
         exit 1
     fi
