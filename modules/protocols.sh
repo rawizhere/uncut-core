@@ -65,11 +65,6 @@ generate_vless_reality_inbound() {
     
     local users=$(jq -c '[.[] | select(.protocols[]? == "vless-reality") | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
-    local padding_json=""
-    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
-        padding_json=', "padding": true'
-    fi
-    
     cat <<EOF
 {
   "type": "vless",
@@ -89,7 +84,7 @@ generate_vless_reality_inbound() {
       "private_key": "$private_key",
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
-    }${padding_json}
+    }
   },
   "sniff": true
 }
@@ -102,11 +97,6 @@ generate_hysteria2_inbound() {
     
     local users=$(jq -c '[.[] | select(.protocols[]? == "hysteria2") | {password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
-    local padding_json=""
-    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
-        padding_json=', "padding": true'
-    fi
-
     cat <<EOF
 {
   "type": "hysteria2",
@@ -124,7 +114,7 @@ generate_hysteria2_inbound() {
     "enabled": true,
     "alpn": ["h3"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
+    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
   },
   "sniff": true
 }
@@ -136,11 +126,6 @@ generate_xhttp_inbound() {
     
     local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
-    local padding_json=""
-    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
-        padding_json=', "padding": true'
-    fi
-
     local padding_range="100-2500"
     if [[ $(get_setting "traffic_shaping_level" "low") == "high" ]]; then
         padding_range="500-4000"
@@ -169,7 +154,7 @@ generate_xhttp_inbound() {
     "enabled": true,
     "alpn": ["h3", "h2", "http/1.1"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
+    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
   },
   "sniff": true
 }
@@ -183,11 +168,6 @@ generate_xhttp_reality_inbound() {
     
     local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp-reality") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
-    local padding_json=""
-    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
-        padding_json=', "padding": true'
-    fi
-
     cat <<EOF
 {
   "type": "vless",
@@ -219,7 +199,7 @@ generate_xhttp_reality_inbound() {
       "private_key": "$private_key",
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
-    }${padding_json}
+    }
   },
   "sniff": true
 }
@@ -303,11 +283,6 @@ generate_tuic_inbound() {
     # For TUIC we use uuid as uuid and password as password
     local users=$(jq -c '[.[] | select(.protocols[]? == "tuic") | {uuid: .uuid, password: (.password // .uuid), name: .name}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
-    local padding_json=""
-    if [[ $(get_setting "dpi_hello_padding_enabled" "false") == "true" ]]; then
-        padding_json=', "padding": true'
-    fi
-
     cat <<EOF
 {
   "type": "tuic",
@@ -323,7 +298,7 @@ generate_tuic_inbound() {
     "enabled": true,
     "alpn": ["h3"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
+    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
   }
 }
 EOF
