@@ -86,44 +86,48 @@ setup_firewall() {
         apt-get install -y ufw > /dev/null 2>&1
     fi
     
-    # Ask about SSH port
-    local ssh_port=22
-    echo ""
-    read -p "Enter SSH port [22]: " custom_ssh_port
-    if [[ -n "$custom_ssh_port" ]]; then
-        if [[ "$custom_ssh_port" =~ ^[0-9]+$ ]] && [[ "$custom_ssh_port" -ge 1 ]] && [[ "$custom_ssh_port" -le 65535 ]]; then
-            ssh_port=$custom_ssh_port
-            if [[ "$ssh_port" != "22" ]]; then
-                print_info "Configuring SSH to listen on port $ssh_port..."
-                
-                # Backup config
-                cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-                
-                # Update config
-                if grep -q "^Port " /etc/ssh/sshd_config; then
-                    sed -i "s/^Port .*/Port $ssh_port/" /etc/ssh/sshd_config
-                elif grep -q "^#Port " /etc/ssh/sshd_config; then
-                    sed -i "s/^#Port .*/Port $ssh_port/" /etc/ssh/sshd_config
-                else
-                    echo "Port $ssh_port" >> /etc/ssh/sshd_config
-                fi
-                
-                # Check for socket activation (common on Ubuntu 22.04+)
-                if systemctl is-active --quiet ssh.socket; then
-                    print_info "Disabling ssh.socket to enforce sshd_config port..."
-                    systemctl stop ssh.socket
-                    systemctl disable ssh.socket
-                fi
-                
-                # Restart SSH
-                if systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1; then
-                    print_success "SSH configuration updated and service restarted"
-                else
-                    print_error "Failed to restart SSH service. Check config manually."
-                fi
+    # SSH port handling
+    local ssh_port="${SSH_PORT:-22}"
+    if [[ "$UNATTENDED" != "true" && -z "$SSH_PORT" ]]; then
+        echo ""
+        read -p "Enter SSH port [22]: " custom_ssh_port
+        if [[ -n "$custom_ssh_port" ]]; then
+            if [[ "$custom_ssh_port" =~ ^[0-9]+$ ]] && [[ "$custom_ssh_port" -ge 1 ]] && [[ "$custom_ssh_port" -le 65535 ]]; then
+                ssh_port=$custom_ssh_port
+            else
+                print_warning "Invalid port, using 22"
+                ssh_port=22
             fi
+        fi
+    fi
+
+    if [[ "$ssh_port" != "22" ]]; then
+        print_info "Configuring SSH to listen on port $ssh_port..."
+        
+        # Backup config
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+        
+        # Update config
+        if grep -q "^Port " /etc/ssh/sshd_config; then
+            sed -i "s/^Port .*/Port $ssh_port/" /etc/ssh/sshd_config
+        elif grep -q "^#Port " /etc/ssh/sshd_config; then
+            sed -i "s/^Port .*/Port $ssh_port/" /etc/ssh/sshd_config
         else
-            print_warning "Invalid port, using 22"
+            echo "Port $ssh_port" >> /etc/ssh/sshd_config
+        fi
+        
+        # Check for socket activation (common on Ubuntu 22.04+)
+        if systemctl is-active --quiet ssh.socket; then
+            print_info "Disabling ssh.socket to enforce sshd_config port..."
+            systemctl stop ssh.socket
+            systemctl disable ssh.socket
+        fi
+        
+        # Restart SSH
+        if systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1; then
+            print_success "SSH configuration updated and service restarted"
+        else
+            print_error "Failed to restart SSH service. Check config manually."
         fi
     fi
     

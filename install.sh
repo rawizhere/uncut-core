@@ -24,6 +24,7 @@ while [[ $# -gt 0 ]]; do
         --country) export COUNTRY="$2"; shift 2 ;;
         --protocols) export PROTOCOLS="$2"; shift 2 ;;
         --clients) export CLIENTS="$2"; shift 2 ;;
+        --ssh-port) export SSH_PORT="$2"; shift 2 ;;
         --auto) export UNATTENDED=true; shift ;;
         *) shift ;;
     esac

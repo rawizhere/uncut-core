@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.s
 Unattended:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- --domain domain.com --email email@site.com --clients "user1,user2"
+curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- --domain domain.com --email email@site.com --ssh-port 2222 --clients "user1,user2"
 ```
 
 ### Usage
