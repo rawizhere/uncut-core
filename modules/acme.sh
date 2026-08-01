@@ -82,8 +82,10 @@ install_acme_sh() {
         /root/.acme.sh/acme.sh --install-cert -d "$domain" \
             --key-file       "$INSTALL_DIR/certs/certificates/$domain.key" \
             --fullchain-file "$INSTALL_DIR/certs/certificates/$domain.crt" \
-            --reloadcmd     "if systemctl is-active --quiet nginx; then systemctl restart nginx; fi"
+            --reloadcmd     "systemctl restart nginx sing-box >/dev/null 2>&1 || true"
             
+        /root/.acme.sh/acme.sh --install-cronjob >/dev/null 2>&1 || true
+
         chmod 644 "$INSTALL_DIR/certs/certificates/$domain.crt"
         chmod 600 "$INSTALL_DIR/certs/certificates/$domain.key"
         

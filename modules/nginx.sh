@@ -161,12 +161,12 @@ setup_nginx_cdn() {
         [[ -z "$domain" ]] && return
         # Skip installation, go straight to config generation
     else
-        # Check Nginx installation
-        if ! command -v nginx &> /dev/null; then
-            print_info "Installing Nginx..."
+        # Check Nginx installation & headers-more module
+        if ! command -v nginx &> /dev/null || ! dpkg -l | grep -q "libnginx-mod-http-headers-more"; then
+            print_info "Installing Nginx and headers-more module..."
             apt-get update -qq
-            apt-get install -y nginx gettext-base > /dev/null 2>&1
-            print_success "Nginx installed"
+            apt-get install -y nginx libnginx-mod-http-headers-more gettext-base > /dev/null 2>&1
+            print_success "Nginx and headers-more installed"
         else
             print_info "Nginx is already installed"
         fi
@@ -193,7 +193,7 @@ setup_nginx_cdn() {
     local cf_pop="${cf_pop_codes[$RANDOM % ${#cf_pop_codes[@]}]}"
     
     # Generate realistic AWS Request ID (longer base64)
-    local aws_req_id=$(openssl rand -base64 42 | tr -d '+/=\n' | cut -c1-56)
+    local aws_req_id=$(openssl rand -base64 42 | tr -d '+/=\n' | cut -c1-54)
     
     # Create Nginx configuration
     print_info "Creating Nginx configuration..."
@@ -219,18 +219,16 @@ setup_nginx_cdn() {
         print_warning "Template headers not found. Using fallback."
         # Fallback heredoc
         cat > /etc/nginx/snippets/cdn_headers.conf <<END
-    add_header X-CDN-Node "${SECOND_LEVEL}-edge-${EDGE_NODE_ID}" always;
-    add_header X-Cache "HIT" always;
-    add_header X-Request-ID \$request_id always;
-    add_header Via "1.1 ${CF_EDGE_ID}.cloudfront.net (CloudFront)" always;
-    add_header Server "CloudFront" always;
-    add_header Accept-Ranges "bytes" always;
-    add_header Vary "Accept-Encoding, Origin" always;
-    add_header Age "\$cache_age" always;
-    add_header X-Amz-Cf-Id "${AWS_REQ_ID}=" always;
-    add_header X-Amz-Cf-Pop "${CF_POP}" always;
-    add_header ETag "\"\$request_id\"" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+more_set_headers 'Server: CloudFront';
+add_header X-Cache "Hit from cloudfront" always;
+add_header Via "1.1 ${CF_EDGE_ID}.cloudfront.net (CloudFront)" always;
+add_header Accept-Ranges "bytes" always;
+add_header Vary "Accept-Encoding, Origin" always;
+add_header Age "\$cache_age" always;
+add_header X-Amz-Cf-Id "${AWS_REQ_ID}=" always;
+add_header X-Amz-Cf-Pop "${CF_POP}" always;
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+add_header Alt-Svc 'h3=":443"; ma=86400' always;
 END
     fi
 

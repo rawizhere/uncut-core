@@ -51,13 +51,17 @@ install_mtg() {
     rm -rf "$tmp_dir"
     
     local domain=$(get_setting "domain")
-    if [[ -z "$domain" ]]; then
-        print_warning "Domain not found in settings! Using aws.amazon.com as fallback domain for TLS."
+    local cert_file="$INSTALL_DIR/certs/certificates/$domain.crt"
+    local fallback_target="127.0.0.1:443"
+    
+    if [[ -z "$domain" ]] || ! is_cert_valid "$cert_file"; then
+        print_warning "SSL certificate for domain is missing or self-signed. Using aws.amazon.com fallback for MTProto TLS."
         domain="aws.amazon.com"
+        fallback_target="aws.amazon.com:443"
     fi
     
     print_info "Generating TLS secret for $domain..."
-    local secret=$("$MTG_INSTALL_DIR/mtg" generate-secret "$domain")
+    local secret=$("$MTG_INSTALL_DIR/mtg" generate-secret "$domain" 2>/dev/null)
     
     if [[ -z "$secret" ]]; then
         print_error "Failed to generate mtg secret"
@@ -68,7 +72,8 @@ install_mtg() {
     cat > "$MTG_INSTALL_DIR/config.toml" <<EOF
 secret = "$secret"
 bind-to = "0.0.0.0:4430"
-fallback = "127.0.0.1:443"
+fallback = "$fallback_target"
+prefer-ip-version = "ipv4"
 EOF
 
     set_setting "mtg_secret" "$secret"
@@ -108,15 +113,23 @@ EOF
     
     if systemctl is-active --quiet mtg; then
         print_success "MTProto proxy installed and started successfully!"
+        show_mtg_status_and_links
     else
         print_error "mtg service failed to start. Check 'journalctl -u mtg'."
     fi
 }
 
+reinstall_mtg() {
+    print_info "Reinstalling MTProto proxy..."
+    uninstall_mtg
+    install_mtg
+}
+
 uninstall_mtg() {
     print_info "Stopping and disabling mtg service..."
-    systemctl stop mtg 2>/dev/null || true
-    systemctl disable mtg 2>/dev/null || true
+    pkill -9 -f "$MTG_INSTALL_DIR/mtg" >/dev/null 2>&1 || true
+    timeout 5 systemctl stop mtg >/dev/null 2>&1 || true
+    systemctl disable mtg >/dev/null 2>&1 || true
     
     print_info "Removing files..."
     rm -f "$MTG_SERVICE_FILE"
@@ -179,7 +192,8 @@ mtproto_menu() {
         
         if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
             echo "1) Show Status & Link"
-            echo "2) Uninstall MTProto Proxy"
+            echo "2) Reinstall MTProto Proxy"
+            echo "3) Uninstall MTProto Proxy"
         else
             echo "1) Install MTProto Proxy"
         fi
@@ -199,6 +213,13 @@ mtproto_menu() {
                 ;;
             2)
                 if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
+                    reinstall_mtg
+                else
+                    print_error "Invalid choice"
+                fi
+                ;;
+            3)
+                if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
                     read -p "Are you sure you want to uninstall MTProto proxy? y/n: " confirm
                     if [[ "$confirm" == "y" ]]; then
                         uninstall_mtg
@@ -214,4 +235,32 @@ mtproto_menu() {
         echo ""
         read -p "Press Enter to continue..."
     done
+}
+
+reconfig_mtg_domain() {
+    if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
+        local domain=$(get_setting "domain")
+        local cert_file="$INSTALL_DIR/certs/certificates/$domain.crt"
+        local fallback_target="127.0.0.1:443"
+        
+        if [[ -z "$domain" ]] || ! is_cert_valid "$cert_file"; then
+            domain="aws.amazon.com"
+            fallback_target="aws.amazon.com:443"
+        fi
+
+        print_info "Syncing MTProto secret with domain: $domain..."
+        local new_secret=$("$MTG_INSTALL_DIR/mtg" generate-secret "$domain" 2>/dev/null)
+        if [[ -n "$new_secret" ]]; then
+            cat > "$MTG_INSTALL_DIR/config.toml" <<EOF
+secret = "$new_secret"
+bind-to = "0.0.0.0:4430"
+fallback = "$fallback_target"
+prefer-ip-version = "ipv4"
+EOF
+            set_setting "mtg_secret" "$new_secret"
+            pkill -9 -f "$MTG_INSTALL_DIR/mtg" >/dev/null 2>&1 || true
+            systemctl restart mtg >/dev/null 2>&1 || true
+            print_success "MTProto domain secret updated"
+        fi
+    fi
 }

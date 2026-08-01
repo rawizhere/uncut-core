@@ -349,28 +349,24 @@ EOF
     echo ""
     
     # Add default protocols or requested protocols
-    if [[ -n "$PROTOCOLS" ]]; then
-        print_info "Configuring requested protocols: $PROTOCOLS..."
-        if [[ "$PROTOCOLS" == "all" ]]; then
-            local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
-            for p in "${all_protos[@]}"; do
-                add_protocol_logic "$p"
-            done
-        else
-            IFS=',' read -ra proto_arr <<< "$PROTOCOLS"
-            for p in "${proto_arr[@]}"; do
-                p=$(echo "$p" | tr -d ' ')
-                [[ -n "$p" ]] && add_protocol_logic "$p"
-            done
-        fi
+    local target_protocols="${PROTOCOLS:-default}"
+    print_info "Configuring requested protocols: $target_protocols..."
+    if [[ "$target_protocols" == "all" ]]; then
+        local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
+        for p in "${all_protos[@]}"; do
+            add_protocol_logic "$p"
+        done
+    elif [[ "$target_protocols" == "default" ]]; then
+        local default_protos=("hysteria2" "vless-reality" "xhttp-reality")
+        for p in "${default_protos[@]}"; do
+            add_protocol_logic "$p"
+        done
     else
-        print_info "Adding default secure protocols (Hysteria2 & XHTTP-Stealth)..."
-        if ! protocol_exists "hysteria2"; then
-            add_protocol_logic "hysteria2"
-        fi
-        if ! protocol_exists "xhttp-stealth"; then
-            add_protocol_logic "xhttp-stealth"
-        fi
+        IFS=',' read -ra proto_arr <<< "$target_protocols"
+        for p in "${proto_arr[@]}"; do
+            p=$(echo "$p" | tr -d ' ')
+            [[ -n "$p" ]] && add_protocol_logic "$p"
+        done
     fi
     
     rebuild_config
@@ -446,6 +442,9 @@ run_system_migration() {
             if command -v install_acme_sh &>/dev/null; then
                 install_acme_sh
             fi
+            if command -v reconfig_mtg_domain &>/dev/null; then
+                reconfig_mtg_domain
+            fi
         fi
     fi
 
@@ -472,6 +471,11 @@ run_system_migration() {
         if [[ "$PROTOCOLS" == "all" ]]; then
             local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
             for p in "${all_protos[@]}"; do
+                add_protocol_logic "$p"
+            done
+        elif [[ "$PROTOCOLS" == "default" ]]; then
+            local default_protos=("hysteria2" "vless-reality" "xhttp-reality")
+            for p in "${default_protos[@]}"; do
                 add_protocol_logic "$p"
             done
         else
@@ -532,6 +536,27 @@ run_system_migration() {
     regenerate_all_subscriptions
     
     print_success "System migration completed successfully"
+}
+
+update_uncut_core() {
+    echo ""
+    echo "=== Update Uncut Core ==="
+    echo ""
+    print_info "Downloading latest Uncut Core codebase from GitHub..."
+    
+    local tmp_tar=$(mktemp)
+    if curl -sL "https://github.com/rawizhere/uncut-core/archive/refs/heads/main.tar.gz" -o "$tmp_tar"; then
+        tar -xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1 --overwrite
+        rm -f "$tmp_tar"
+        chmod +x "$INSTALL_DIR/raw" "$INSTALL_DIR/core/"*.sh "$INSTALL_DIR/modules/"*.sh 2>/dev/null || true
+        ln -sf "$INSTALL_DIR/raw" /usr/local/bin/raw
+        print_success "Codebase updated to latest GitHub main commit"
+        run_system_migration
+        print_success "Uncut Core update and system migration complete!"
+    else
+        print_error "Failed to download update package"
+        rm -f "$tmp_tar"
+    fi
 }
 
 update_singbox() {
@@ -758,19 +783,42 @@ show_status() {
 
 restart_service() {
     echo ""
-    echo "=== Restart ==="
+    echo "=== Restart Services ==="
     echo ""
     
-    print_info "Restarting service..."
-    systemctl restart sing-box
-    sleep 2
+    print_info "Restarting sing-box service..."
+    systemctl restart sing-box >/dev/null 2>&1 || true
     
-    if systemctl is-active --quiet sing-box; then
-        print_success "Sing-box restarted"
-    else
-        print_error "Launch error! Check logs."
+    print_info "Restarting Nginx service..."
+    systemctl restart nginx >/dev/null 2>&1 || true
+    
+    if systemctl is-active --quiet mtg 2>/dev/null || [[ -d "/opt/mtg" ]]; then
+        print_info "Restarting MTProto Proxy (mtg)..."
+        pkill -9 -f "/opt/mtg/mtg" >/dev/null 2>&1 || true
+        systemctl restart mtg >/dev/null 2>&1 || true
     fi
     
+    if systemctl is-active --quiet uncut-noise 2>/dev/null; then
+        print_info "Restarting Traffic Noise Generator..."
+        systemctl restart uncut-noise >/dev/null 2>&1 || true
+    fi
+    
+    sleep 1
+    
+    local sb_ok="${RED}Failed${NC}"
+    systemctl is-active --quiet sing-box && sb_ok="${GREEN}Running${NC}"
+    local nx_ok="${RED}Failed${NC}"
+    systemctl is-active --quiet nginx && nx_ok="${GREEN}Running${NC}"
+    
+    echo ""
+    echo -e "Sing-box: $sb_ok"
+    echo -e "Nginx: $nx_ok"
+    if [[ -d "/opt/mtg" ]]; then
+        local mt_ok="${RED}Failed${NC}"
+        systemctl is-active --quiet mtg && mt_ok="${GREEN}Running${NC}"
+        echo -e "MTProto (mtg): $mt_ok"
+    fi
+    print_success "All system services restarted successfully"
     echo ""
 }
 

@@ -37,8 +37,7 @@ server {
 
 # Default HTTPS server - Close connection for unknown SNI/IP
 server {
-    listen 443 ssl default_server;
-    http2 on;
+    listen 443 ssl http2 default_server;
     server_name _;
     ssl_certificate ${INSTALL_DIR}/certs/certificates/${DOMAIN}.crt;
     ssl_certificate_key ${INSTALL_DIR}/certs/certificates/${DOMAIN}.key;
@@ -47,8 +46,7 @@ server {
 
 # HTTPS server - CDN masking
 server {
-    listen 443 ssl;
-    http2 on;
+    listen 443 ssl http2;
     server_name ${DOMAIN};
     server_tokens off;
 
@@ -111,7 +109,7 @@ server {
     <Message>Access Denied</Message>
     <RequestId>${AWS_REQ_ID}</RequestId>
     <HostId>${HOST_ID}</HostId>
-    <Resource>/</Resource>
+    <Resource>$request_uri</Resource>
 </Error>';
     }
 

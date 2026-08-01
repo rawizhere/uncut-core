@@ -16,6 +16,7 @@ fi
 
 # Parse CLI arguments
 export UNATTENDED=false
+export PROTOCOLS="default"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --domain) export DOMAIN="$2"; shift 2 ;;
@@ -35,6 +36,11 @@ if [[ -n "$DOMAIN" && -n "$EMAIL" ]]; then
 fi
 
 echo -e "${GREEN}Installing Uncut Core...${NC}"
+
+# Install core dependencies immediately before running any script logic
+echo "Installing required system dependencies (jq, curl, tar, openssl)..."
+apt-get update -qq >/dev/null 2>&1 || true
+apt-get install -y jq curl tar openssl ca-certificates gawk gettext-base >/dev/null 2>&1 || true
 
 INSTALL_DIR="/opt/sing-box"
 mkdir -p "$INSTALL_DIR"

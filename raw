@@ -74,7 +74,7 @@ main() {
             13) show_logs ;;
             14) install_acme_sh --force ;;
             15) mtproto_menu ;;
-            16) update_singbox ;;
+            16) update_uncut_core ;;
             17) toggle_auto_update ;;
             18) change_singbox_version ;;
             19) install_singbox ;;
