@@ -1,6 +1,6 @@
 [sshd]
 enabled = true
-port = ssh
+port = ${SSH_PORT}
 filter = sshd
 logpath = /var/log/auth.log
 maxretry = 5

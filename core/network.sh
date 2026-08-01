@@ -77,6 +77,66 @@ enable_bbr() {
     print_success "BBR enabled"
 }
 
+# Configure SSH listening port (Supports Ubuntu 20.04, 22.04, 24.04, 26.04)
+configure_ssh_port() {
+    local ssh_port=$1
+    if [[ -z "$ssh_port" || "$ssh_port" == "null" ]]; then
+        ssh_port=$(get_setting "ssh_port" "22")
+    fi
+
+    print_info "Configuring SSH service on port $ssh_port..."
+
+    # 1. Update /etc/ssh/sshd_config
+    if [[ -f /etc/ssh/sshd_config ]]; then
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak 2>/dev/null || true
+        if grep -q "^Port " /etc/ssh/sshd_config; then
+            sed -i "s/^Port .*/Port $ssh_port/" /etc/ssh/sshd_config
+        elif grep -q "^#Port " /etc/ssh/sshd_config; then
+            sed -i "s/^#Port .*/Port $ssh_port/" /etc/ssh/sshd_config
+        else
+            echo "Port $ssh_port" >> /etc/ssh/sshd_config
+        fi
+    fi
+
+    # 2. Update drop-in config directory for Ubuntu 22.04 / 24.04 / 26.04
+    if [[ -d /etc/ssh/sshd_config.d ]]; then
+        cat > /etc/ssh/sshd_config.d/uncut-ssh.conf <<EOF
+Port $ssh_port
+EOF
+    fi
+
+    # 3. Override systemd socket activation for SSH (Ubuntu 22.04, 24.04, 26.04)
+    if systemctl list-unit-files 2>/dev/null | grep -q "ssh.socket"; then
+        mkdir -p /etc/systemd/system/ssh.socket.d
+        cat > /etc/systemd/system/ssh.socket.d/override.conf <<EOF
+[Socket]
+ListenStream=
+ListenStream=$ssh_port
+EOF
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl stop ssh.socket >/dev/null 2>&1 || true
+        systemctl disable ssh.socket >/dev/null 2>&1 || true
+    fi
+
+    # 4. Enable and Restart SSH service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable ssh >/dev/null 2>&1 || systemctl enable sshd >/dev/null 2>&1 || true
+    systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || true
+
+    # 5. Lock down UFW (Remove port 22 and OpenSSH rules if custom port != 22)
+    if command -v ufw &>/dev/null; then
+        if [[ "$ssh_port" != "22" ]]; then
+            ufw delete allow 22/tcp >/dev/null 2>&1 || true
+            ufw delete allow 22 >/dev/null 2>&1 || true
+            ufw delete allow 'OpenSSH' >/dev/null 2>&1 || true
+        fi
+        ufw allow "${ssh_port}/tcp" comment 'SSH' >/dev/null 2>&1 || true
+    fi
+
+    set_setting "ssh_port" "$ssh_port"
+    print_success "SSH configuration updated for port $ssh_port"
+}
+
 # Configure UFW firewall
 setup_firewall() {
     print_info "Configuring UFW firewall..."
@@ -101,39 +161,11 @@ setup_firewall() {
         fi
     fi
 
-    if [[ "$ssh_port" != "22" ]]; then
-        print_info "Configuring SSH to listen on port $ssh_port..."
-        
-        # Backup config
-        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-        
-        # Update config
-        if grep -q "^Port " /etc/ssh/sshd_config; then
-            sed -i "s/^Port .*/Port $ssh_port/" /etc/ssh/sshd_config
-        elif grep -q "^#Port " /etc/ssh/sshd_config; then
-            sed -i "s/^Port .*/Port $ssh_port/" /etc/ssh/sshd_config
-        else
-            echo "Port $ssh_port" >> /etc/ssh/sshd_config
-        fi
-        
-        # Check for socket activation (common on Ubuntu 22.04+)
-        if systemctl is-active --quiet ssh.socket; then
-            print_info "Disabling ssh.socket to enforce sshd_config port..."
-            systemctl stop ssh.socket
-            systemctl disable ssh.socket
-        fi
-        
-        # Restart SSH
-        if systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1; then
-            print_success "SSH configuration updated and service restarted"
-        else
-            print_error "Failed to restart SSH service. Check config manually."
-        fi
-    fi
+    # Enforce SSH port configuration (including Ubuntu 22/24/26 sockets)
+    configure_ssh_port "$ssh_port"
     
     # Disable IPv6 in UFW (as requested)
     sed -i 's/IPV6=yes/IPV6=no/g' /etc/default/ufw
-
     
     # Reset rules
     ufw --force reset > /dev/null 2>&1
@@ -160,9 +192,6 @@ setup_firewall() {
     
     # Enable firewall
     ufw --force enable > /dev/null 2>&1
-    
-    # Save SSH port to settings for future updates
-    set_setting "ssh_port" "$ssh_port"
     
     print_success "Firewall configured"
     local open_ports="${ssh_port}(SSH), 80, 443, 2053, 2083, 8443(TCP/UDP), 8550(UDP), 52143, 52144"

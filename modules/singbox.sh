@@ -438,6 +438,25 @@ run_system_migration() {
     # Step 2: Initialize default settings / new protocol keys if missing
     init_settings
     
+    if [[ -n "$DOMAIN" ]]; then
+        local current_domain=$(get_setting "domain")
+        if [[ "$current_domain" != "$DOMAIN" ]]; then
+            print_info "Updating domain: ${current_domain:-none} -> $DOMAIN..."
+            set_setting "domain" "$DOMAIN"
+            if command -v install_acme_sh &>/dev/null; then
+                install_acme_sh
+            fi
+        fi
+    fi
+
+    if [[ -n "$EMAIL" ]]; then
+        set_setting "email" "$EMAIL"
+    fi
+
+    if [[ -n "$SSH_PORT" ]]; then
+        configure_ssh_port "$SSH_PORT"
+    fi
+
     if [[ -n "$COUNTRY" ]]; then
         set_setting "country" "$COUNTRY"
     fi

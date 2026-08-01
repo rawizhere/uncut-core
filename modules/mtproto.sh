@@ -149,14 +149,24 @@ show_mtg_status_and_links() {
     fi
     
     local secret=$(get_setting "mtg_secret")
-    local port=$(get_setting "mtg_port")
+    local port=$(get_setting "mtg_port" "4430")
     local domain=$(get_setting "domain")
+    local server_ip=$(curl -s --connect-timeout 2 https://api.ipify.org 2>/dev/null || curl -s --connect-timeout 2 https://ifconfig.me 2>/dev/null)
     
-    if [[ -n "$secret" && -n "$port" && -n "$domain" ]]; then
+    if [[ -n "$secret" && -n "$port" ]]; then
         echo ""
-        echo "=== MTProto Link ==="
-        echo "tg://proxy?server=${domain}&port=${port}&secret=${secret}"
-        echo "===================="
+        echo "=== MTProto Proxy Links ==="
+        if [[ -n "$domain" ]]; then
+            echo "Domain link:"
+            echo "tg://proxy?server=${domain}&port=${port}&secret=${secret}"
+            echo ""
+        fi
+        if [[ -n "$server_ip" ]]; then
+            echo "IP link:"
+            echo "tg://proxy?server=${server_ip}&port=${port}&secret=${secret}"
+            echo ""
+        fi
+        echo "==========================="
         echo ""
     fi
 }
