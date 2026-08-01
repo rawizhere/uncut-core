@@ -21,8 +21,7 @@ generate_vless_ws_inbound() {
     "max_early_data": 0,
     "early_data_header_name": "Sec-WebSocket-Protocol"
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -54,8 +53,7 @@ generate_xhttp_stealth_inbound() {
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -93,8 +91,7 @@ generate_vless_reality_inbound() {
       "max_time_difference": "5m"
     }${padding_json}
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -129,8 +126,7 @@ generate_hysteria2_inbound() {
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -175,8 +171,7 @@ generate_xhttp_inbound() {
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"${padding_json}
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -226,8 +221,7 @@ generate_xhttp_reality_inbound() {
       "max_time_difference": "5m"
     }${padding_json}
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -248,8 +242,7 @@ generate_sudoku_inbound() {
   "key": "$sudoku_key",
   "aead_method": "chacha20-poly1305",
   "table_type": "prefer_entropy",
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -273,8 +266,7 @@ generate_trusttunnel_inbound() {
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }
@@ -300,8 +292,7 @@ generate_snell_inbound() {
     "mode": "tls",
     "host": "$sni"
   },
-  "sniff": true,
-  "sniff_override_destination": true
+  "sniff": true
 }
 EOF
 }

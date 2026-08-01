@@ -37,6 +37,18 @@ install_acme_sh() {
     local cert_crt="$INSTALL_DIR/certs/certificates/$domain.crt"
     local cert_key="$INSTALL_DIR/certs/certificates/$domain.key"
     
+    mkdir -p "$INSTALL_DIR/certs/certificates"
+
+    # Pre-generate self-signed cert if missing so services never crash on load
+    if [[ ! -f "$cert_crt" || ! -f "$cert_key" ]]; then
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+            -keyout "$cert_key" \
+            -out "$cert_crt" \
+            -subj "/CN=$domain" >/dev/null 2>&1 || true
+        chmod 644 "$cert_crt" 2>/dev/null || true
+        chmod 600 "$cert_key" 2>/dev/null || true
+    fi
+
     if [[ "$force_issue" == "false" ]] && is_cert_valid "$cert_crt"; then
         print_info "Certificates already exist and are valid. Skipping issuance."
         print_success "Using existing certificates: $cert_crt"
