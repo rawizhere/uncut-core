@@ -392,15 +392,19 @@ EOF
     rm -f /etc/nginx/sites-enabled/default
     rm -f /etc/nginx/sites-available/default
     
-    # Hide nginx version and add Rate Limiting zones
-    if ! grep -q "server_tokens off" /etc/nginx/nginx.conf; then
+    # Hide nginx version safely without duplicate directives
+    if grep -q "server_tokens" /etc/nginx/nginx.conf; then
+        sed -i 's/^[[:space:]]*#*[[:space:]]*server_tokens.*/    server_tokens off;/' /etc/nginx/nginx.conf
+    else
         sed -i '/http {/a \    server_tokens off;' /etc/nginx/nginx.conf
     fi
     
     # Add Rate Limiting zones if not present
-    if ! grep -q "limit_req_zone" /etc/nginx/nginx.conf; then
-        sed -i '/http {/a \    limit_req_zone $binary_remote_addr zone=anti_scan:10m rate=2r/s;' /etc/nginx/nginx.conf
+    if ! grep -q "zone=anti_conn" /etc/nginx/nginx.conf; then
         sed -i '/http {/a \    limit_conn_zone $binary_remote_addr zone=anti_conn:10m;' /etc/nginx/nginx.conf
+    fi
+    if ! grep -q "zone=anti_scan" /etc/nginx/nginx.conf; then
+        sed -i '/http {/a \    limit_req_zone $binary_remote_addr zone=anti_scan:10m rate=2r/s;' /etc/nginx/nginx.conf
     fi
     
     # Check configuration
