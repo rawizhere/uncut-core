@@ -8,6 +8,8 @@ ExecStart=${INSTALL_DIR}/sing-box run -c ${CONFIG_FILE}
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
+LimitNOFILE=65535
+LimitNPROC=65535
 StandardOutput=append:${LOG_FILE}
 StandardError=append:${LOG_FILE}
 

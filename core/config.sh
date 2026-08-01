@@ -26,6 +26,11 @@ init_settings() {
     set_setting "masking_theme" "cdn_sync" # Always CloudFront/AWS
     [[ -z $(get_setting "auto_update") ]] && set_setting "auto_update" "false"
     
+    local current_sni=$(get_setting "sni")
+    if [[ -z "$current_sni" || "$current_sni" == "www.microsoft.com" ]]; then
+        set_setting "sni" "dl.google.com"
+    fi
+    
     # DPI Flags
     [[ -z $(get_setting "dpi_fragment_enabled") ]] && set_setting "dpi_fragment_enabled" "true"
     [[ -z $(get_setting "dpi_hello_padding_enabled") ]] && set_setting "dpi_hello_padding_enabled" "true"
@@ -33,6 +38,19 @@ init_settings() {
     # Protocol Keys Initialization
     [[ -z $(get_setting "sudoku_key") ]] && set_setting "sudoku_key" "$(openssl rand -hex 16)"
     [[ -z $(get_setting "snell_psk") ]] && set_setting "snell_psk" "$(openssl rand -hex 16)"
+    [[ -z $(get_setting "reality_short_id") ]] && set_setting "reality_short_id" "$(generate_short_id)"
+    
+    if [[ -z $(get_setting "reality_private_key") || -z $(get_setting "reality_public_key") ]]; then
+        if [[ -f "$INSTALL_DIR/sing-box" ]]; then
+            local keys_output=$("$INSTALL_DIR/sing-box" generate reality-keypair 2>/dev/null)
+            local priv=$(echo "$keys_output" | grep "PrivateKey:" | awk '{print $2}')
+            local pub=$(echo "$keys_output" | grep "PublicKey:" | awk '{print $2}')
+            if [[ -n "$priv" && -n "$pub" ]]; then
+                set_setting "reality_private_key" "$priv"
+                set_setting "reality_public_key" "$pub"
+            fi
+        fi
+    fi
 
     set_setting "traffic_shaping_level" "high"
     set_setting "shadow_tls_enabled" "false"
@@ -87,6 +105,14 @@ get_setting() {
     local key=$1
     local default=$2
     local value=$(jq -r ".$key // empty" "$SETTINGS_FILE" 2>/dev/null)
+    if [[ "$key" == "sni" && ("$value" == "www.microsoft.com" || -z "$value" || "$value" == "null") ]]; then
+        if [[ -n "$SNI" ]]; then
+            value="$SNI"
+        else
+            value="dl.google.com"
+        fi
+        set_setting "sni" "$value"
+    fi
     if [[ -z "$value" || "$value" == "null" ]]; then
         echo "$default"
     else
@@ -103,13 +129,20 @@ set_setting() {
     mv "$tmp" "$SETTINGS_FILE"
 }
 
-# Add protocol to settings.json
+# Add protocol to settings.json and update existing clients
 add_protocol_to_settings() {
     local protocol=$1
     local tmp=$(mktemp)
     # Ensure protocol is split by space if accidentally passed as one string
     jq --arg proto "$protocol" '.protocols += ($proto | split(" ")) | .protocols |= (flatten | map(select(. != "")) | unique)' "$SETTINGS_FILE" > "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
+    
+    # Also add new protocol to existing clients
+    if [[ -f "$CLIENTS_FILE" ]]; then
+        local ctmp=$(mktemp)
+        jq --arg proto "$protocol" 'map(.protocols += ($proto | split(" ")) | .protocols |= (flatten | map(select(. != "")) | unique))' "$CLIENTS_FILE" > "$ctmp"
+        mv "$ctmp" "$CLIENTS_FILE"
+    fi
 }
 
 # Remove protocol from settings.json

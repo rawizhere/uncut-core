@@ -168,6 +168,11 @@ generate_subscription_file() {
         client_protos=$(jq -r --arg uuid "$uuid" '.[] | select(.uuid == $uuid) | .protocols?[]?' "$CLIENTS_FILE" 2>/dev/null)
     fi
     
+    # Default to all active server protocols if still empty or null
+    if [[ -z "$client_protos" || "$client_protos" == "null" ]]; then
+        client_protos="${active_server_protos[*]}"
+    fi
+    
     local links=""
     local protocol
     for protocol in $client_protos; do
@@ -358,8 +363,16 @@ rebuild_config() {
     mv "$tmp" "$CONFIG_FILE"
     rm -f "$backup_file"
     
+    # Sync firewall ports for active protocols
+    if command -v sync_firewall_ports &>/dev/null; then
+        sync_firewall_ports
+    fi
+
     # Regenerate subscription files
     regenerate_all_subscriptions
+    
+    # Reload sing-box with new configuration
+    systemctl restart sing-box >/dev/null 2>&1 || true
     
     print_success "Configuration updated"
 }
@@ -745,7 +758,7 @@ edit_client() {
     echo "Current protocols: ${current_protos:-None}"
     echo ""
     
-    local all_protocols=($(get_protocols))
+    local all_protocols=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
     echo "Select new protocol list:"
     for i in "${!all_protocols[@]}"; do
         echo "$((i+1))) ${all_protocols[$i]}"
@@ -763,6 +776,15 @@ edit_client() {
             fi
         done
     fi
+
+    # Ensure selected protocols exist on server
+    for p in "${selected_protos[@]}"; do
+        if ! protocol_exists "$p"; then
+            print_info "Enabling protocol '$p' on server..."
+            add_protocol_logic "$p"
+        fi
+    done
+
     local selected_protos_json=$(printf "%s\n" "${selected_protos[@]}" | tr ' ' '\n' | jq -R 'select(. != "")' | jq -s -c 'flatten | unique' || echo "[]")
     
     local tmp=$(mktemp)
@@ -777,6 +799,7 @@ edit_client() {
     local password=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .password // .uuid' "$CLIENTS_FILE")
     local sub_hash=$(jq -r --arg name "$name" '.[] | select(.name == $name) | .sub_hash' "$CLIENTS_FILE")
     
+    rebuild_config
     generate_subscription_file "$name" "$uuid" "$password" "$sub_hash" "$selected_protos_json"
     rebuild_config
     systemctl restart sing-box

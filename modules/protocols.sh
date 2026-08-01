@@ -2,7 +2,7 @@
 
 # Configuration generators for Inbounds
 generate_vless_ws_inbound() {
-    local users=$(jq -c '[.[] | select(.protocols[]? == "vless-ws") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "vless-ws")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
     local primary_path_raw=$(echo "$paths_str" | cut -d',' -f1)
@@ -20,14 +20,13 @@ generate_vless_ws_inbound() {
     "path": "$salted_path",
     "max_early_data": 0,
     "early_data_header_name": "Sec-WebSocket-Protocol"
-  },
-  "sniff": true
+  }
 }
 EOF
 }
 
 generate_xhttp_stealth_inbound() {
-    local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp-stealth") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "xhttp-stealth")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
     local mode=$(echo "$theme_data" | awk -F'|' '{print $3}' | cut -d':' -f2)
@@ -42,7 +41,6 @@ generate_xhttp_stealth_inbound() {
   "listen": "127.0.0.1",
   "listen_port": 10002,
   "users": $users,
-  "trusted_x_forwarded_for": ["127.0.0.1"],
   "transport": {
     "type": "xhttp",
     "path": "$salted_path",
@@ -52,18 +50,29 @@ generate_xhttp_stealth_inbound() {
     "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
-  },
-  "sniff": true
+  }
 }
 EOF
 }
 
 generate_vless_reality_inbound() {
-    local sni=$(get_setting "sni")
+    local sni=$(get_setting "sni" "dl.google.com")
     local private_key=$(get_setting "reality_private_key")
     local short_id=$(get_setting "reality_short_id")
     
-    local users=$(jq -c '[.[] | select(.protocols[]? == "vless-reality") | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    if [[ -z "$private_key" || -z "$short_id" ]]; then
+        if [[ -f "$INSTALL_DIR/sing-box" ]]; then
+            local keys_output=$("$INSTALL_DIR/sing-box" generate reality-keypair 2>/dev/null)
+            private_key=$(echo "$keys_output" | grep "PrivateKey:" | awk '{print $2}')
+            local public_key=$(echo "$keys_output" | grep "PublicKey:" | awk '{print $2}')
+            short_id=$(generate_short_id)
+            set_setting "reality_private_key" "$private_key"
+            set_setting "reality_public_key" "$public_key"
+            set_setting "reality_short_id" "$short_id"
+        fi
+    fi
+    
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "vless-reality")) | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -85,8 +94,7 @@ generate_vless_reality_inbound() {
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
     }
-  },
-  "sniff": true
+  }
 }
 EOF
 }
@@ -95,7 +103,7 @@ generate_hysteria2_inbound() {
     local domain=$(get_setting "domain")
     local obfs_password=$(get_setting "hysteria_obfs_password")
     
-    local users=$(jq -c '[.[] | select(.protocols[]? == "hysteria2") | {password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "hysteria2")) | {password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -115,8 +123,7 @@ generate_hysteria2_inbound() {
     "alpn": ["h3"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
-  },
-  "sniff": true
+  }
 }
 EOF
 }
@@ -124,7 +131,7 @@ EOF
 generate_xhttp_inbound() {
     local domain=$(get_setting "domain")
     
-    local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "xhttp")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     local padding_range="100-2500"
     if [[ $(get_setting "traffic_shaping_level" "low") == "high" ]]; then
@@ -155,18 +162,29 @@ generate_xhttp_inbound() {
     "alpn": ["h3", "h2", "http/1.1"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
-  },
-  "sniff": true
+  }
 }
 EOF
 }
 
 generate_xhttp_reality_inbound() {
-    local sni=$(get_setting "sni")
+    local sni=$(get_setting "sni" "dl.google.com")
     local private_key=$(get_setting "reality_private_key")
     local short_id=$(get_setting "reality_short_id")
     
-    local users=$(jq -c '[.[] | select(.protocols[]? == "xhttp-reality") | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    if [[ -z "$private_key" || -z "$short_id" ]]; then
+        if [[ -f "$INSTALL_DIR/sing-box" ]]; then
+            local keys_output=$("$INSTALL_DIR/sing-box" generate reality-keypair 2>/dev/null)
+            private_key=$(echo "$keys_output" | grep "PrivateKey:" | awk '{print $2}')
+            local public_key=$(echo "$keys_output" | grep "PublicKey:" | awk '{print $2}')
+            short_id=$(generate_short_id)
+            set_setting "reality_private_key" "$private_key"
+            set_setting "reality_public_key" "$public_key"
+            set_setting "reality_short_id" "$short_id"
+        fi
+    fi
+    
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "xhttp-reality")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -200,8 +218,7 @@ generate_xhttp_reality_inbound() {
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
     }
-  },
-  "sniff": true
+  }
 }
 EOF
 }
@@ -221,15 +238,14 @@ generate_sudoku_inbound() {
   "listen_port": 8551,
   "key": "$sudoku_key",
   "aead_method": "chacha20-poly1305",
-  "table_type": "prefer_entropy",
-  "sniff": true
+  "table_type": "prefer_entropy"
 }
 EOF
 }
 
 generate_trusttunnel_inbound() {
     local domain=$(get_setting "domain")
-    local users=$(jq -c '[.[] | select(.protocols[]? == "trusttunnel") | {name: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "trusttunnel")) | {name: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
 
     cat <<EOF
 {
@@ -245,8 +261,7 @@ generate_trusttunnel_inbound() {
     "alpn": ["h2", "h3"],
     "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
     "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
-  },
-  "sniff": true
+  }
 }
 EOF
 }
@@ -271,8 +286,7 @@ generate_snell_inbound() {
   "obfs": {
     "mode": "tls",
     "host": "$sni"
-  },
-  "sniff": true
+  }
 }
 EOF
 }
@@ -281,7 +295,7 @@ generate_tuic_inbound() {
     local domain=$(get_setting "domain")
     
     # For TUIC we use uuid as uuid and password as password
-    local users=$(jq -c '[.[] | select(.protocols[]? == "tuic") | {uuid: .uuid, password: (.password // .uuid), name: .name}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "tuic")) | {uuid: .uuid, password: (.password // .uuid), name: .name}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -306,7 +320,7 @@ EOF
 
 generate_http_inbound() {
     # For HTTP we use name as username and password as password
-    local users=$(jq -c '[.[] | select(.protocols[]? == "http") | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "http")) | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {
@@ -321,7 +335,7 @@ EOF
 
 generate_socks_inbound() {
     # For SOCKS we use name as username and password as password
-    local users=$(jq -c '[.[] | select(.protocols[]? == "socks") | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "socks")) | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
 {

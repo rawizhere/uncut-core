@@ -147,6 +147,8 @@ ExecStart=$INSTALL_DIR/sing-box run -c $CONFIG_FILE
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=5
+LimitNOFILE=65535
+LimitNPROC=65535
 StandardOutput=append:$LOG_FILE
 StandardError=append:$LOG_FILE
 
@@ -228,7 +230,7 @@ install_singbox() {
     local domain="$DOMAIN"
     local email="$EMAIL"
     local country="${COUNTRY:-US}"
-    local default_sni="www.microsoft.com"
+    local default_sni="dl.google.com"
     local sni="${SNI:-$default_sni}"
 
     if [[ -z "$domain" ]]; then
@@ -304,6 +306,11 @@ install_singbox() {
     setup_logrotate 2>&1 | tee -a "$install_log"
     setup_firewall 2>&1 | tee -a "$install_log"
     
+    local reality_keys=$("$INSTALL_DIR/sing-box" generate reality-keypair 2>/dev/null)
+    local reality_priv=$(echo "$reality_keys" | grep "PrivateKey:" | awk '{print $2}')
+    local reality_pub=$(echo "$reality_keys" | grep "PublicKey:" | awk '{print $2}')
+    local reality_sid=$(generate_short_id)
+
     # Create settings.json first as issue_certificates needs it
     cat > "$SETTINGS_FILE" <<EOF
 {
@@ -311,9 +318,9 @@ install_singbox() {
   "email": "$email",
   "country": "$country",
   "sni": "$sni",
-  "reality_private_key": "",
-  "reality_public_key": "",
-  "reality_short_id": "",
+  "reality_private_key": "$reality_priv",
+  "reality_public_key": "$reality_pub",
+  "reality_short_id": "$reality_sid",
   "hysteria_obfs_password": "$(openssl rand -hex 16)",
   "protocol_salt": "$(openssl rand -hex 4)",
   "masking_theme": "cdn_sync",
@@ -344,11 +351,18 @@ EOF
     # Add default protocols or requested protocols
     if [[ -n "$PROTOCOLS" ]]; then
         print_info "Configuring requested protocols: $PROTOCOLS..."
-        IFS=',' read -ra proto_arr <<< "$PROTOCOLS"
-        for p in "${proto_arr[@]}"; do
-            p=$(echo "$p" | tr -d ' ')
-            [[ -n "$p" ]] && add_protocol_logic "$p"
-        done
+        if [[ "$PROTOCOLS" == "all" ]]; then
+            local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
+            for p in "${all_protos[@]}"; do
+                add_protocol_logic "$p"
+            done
+        else
+            IFS=',' read -ra proto_arr <<< "$PROTOCOLS"
+            for p in "${proto_arr[@]}"; do
+                p=$(echo "$p" | tr -d ' ')
+                [[ -n "$p" ]] && add_protocol_logic "$p"
+            done
+        fi
     else
         print_info "Adding default secure protocols (Hysteria2 & XHTTP-Stealth)..."
         if ! protocol_exists "hysteria2"; then
@@ -424,6 +438,63 @@ run_system_migration() {
     # Step 2: Initialize default settings / new protocol keys if missing
     init_settings
     
+    if [[ -n "$COUNTRY" ]]; then
+        set_setting "country" "$COUNTRY"
+    fi
+
+    if [[ -n "$SNI" ]]; then
+        set_setting "sni" "$SNI"
+    elif [[ "$(get_setting "sni")" == "www.microsoft.com" ]]; then
+        set_setting "sni" "dl.google.com"
+    fi
+
+    if [[ -n "$PROTOCOLS" ]]; then
+        print_info "Updating system protocols: $PROTOCOLS..."
+        if [[ "$PROTOCOLS" == "all" ]]; then
+            local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
+            for p in "${all_protos[@]}"; do
+                add_protocol_logic "$p"
+            done
+        else
+            IFS=',' read -ra proto_arr <<< "$PROTOCOLS"
+            for p in "${proto_arr[@]}"; do
+                p=$(echo "$p" | tr -d ' ')
+                [[ -n "$p" ]] && add_protocol_logic "$p"
+            done
+        fi
+    fi
+
+    if [[ -n "$CLIENTS" ]]; then
+        print_info "Updating clients: $CLIENTS..."
+        IFS=',' read -ra client_arr <<< "$CLIENTS"
+        local active_protos=$(get_protocols | jq -R . | jq -s .)
+        for c in "${client_arr[@]}"; do
+            c=$(echo "$c" | tr -d ' ')
+            if [[ -n "$c" ]] && validate_client_name "$c"; then
+                if ! client_exists "$c"; then
+                    local uuid=$(generate_uuid)
+                    local password=$(generate_password)
+                    local sub_hash=$(generate_client_hash "$uuid")
+                    local new_client=$(jq -n \
+                        --arg name "$c" \
+                        --arg uuid "$uuid" \
+                        --arg password "$password" \
+                        --arg sub_hash "$sub_hash" \
+                        --argjson protocols "$active_protos" \
+                        '{name: $name, uuid: $uuid, password: $password, sub_hash: $sub_hash, protocols: $protocols}')
+                    local tmp=$(mktemp)
+                    jq --argjson new_client "$new_client" '. += [$new_client]' "$CLIENTS_FILE" > "$tmp"
+                    mv "$tmp" "$CLIENTS_FILE"
+                else
+                    local tmp=$(mktemp)
+                    jq --arg name "$c" --argjson protos "$active_protos" \
+                        'map(if .name == $name then . + {protocols: $protos} else . end)' "$CLIENTS_FILE" > "$tmp"
+                    mv "$tmp" "$CLIENTS_FILE"
+                fi
+            fi
+        done
+    fi
+    
     # Step 3: Re-apply Nginx config
     local domain=$(get_setting "domain")
     if [[ -n "$domain" ]]; then
@@ -431,9 +502,11 @@ run_system_migration() {
         setup_nginx_cdn "$domain"
     fi
     
-    # Step 4: Rebuild sing-box config
+    # Step 4: Rebuild sing-box config and restart services
     print_info "Rebuilding sing-box configuration..."
     rebuild_config
+    systemctl restart sing-box >/dev/null 2>&1 || true
+    systemctl restart nginx >/dev/null 2>&1 || true
     
     # Step 5: Regenerate subscriptions
     print_info "Regenerating client subscriptions..."

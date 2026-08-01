@@ -54,7 +54,7 @@ else
     echo "Git not found, downloading release tarball..."
     tmp_tar=$(mktemp)
     if curl -sL https://github.com/rawizhere/uncut-core/archive/refs/heads/main.tar.gz -o "$tmp_tar"; then
-        tar -xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1
+        tar -xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1 --overwrite
         rm -f "$tmp_tar"
     else
         echo -e "${RED}Failed to download repository tarball. Installing git...${NC}"
