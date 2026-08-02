@@ -161,14 +161,15 @@ setup_nginx_cdn() {
         [[ -z "$domain" ]] && return
         # Skip installation, go straight to config generation
     else
-        # Check Nginx installation & headers-more module
-        if ! command -v nginx &> /dev/null || ! dpkg -l | grep -q "libnginx-mod-http-headers-more"; then
-            print_info "Installing Nginx and headers-more module..."
-            apt-get update -qq
-            apt-get install -y nginx libnginx-mod-http-headers-more gettext-base > /dev/null 2>&1
-            print_success "Nginx and headers-more installed"
-        else
-            print_info "Nginx is already installed"
+        # Check Nginx installation & HTTP/3 QUIC support
+        if ! command -v nginx &> /dev/null || ! nginx -V 2>&1 | grep -q "with-http_v3_module"; then
+            print_info "Upgrading Nginx to latest version with HTTP/3 QUIC support..."
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -y software-properties-common >/dev/null 2>&1 || true
+            add-apt-repository -y ppa:ondrej/nginx >/dev/null 2>&1 || true
+            apt-get update -qq >/dev/null 2>&1
+            apt-get install -y nginx libnginx-mod-http-headers-more gettext-base > /dev/null 2>&1 || apt-get install -y nginx gettext-base > /dev/null 2>&1
+            print_success "Nginx upgraded to latest version"
         fi
     fi
 
@@ -209,17 +210,39 @@ setup_nginx_cdn() {
     export AWS_REQ_ID="$aws_req_id"
     export XHTTP_LOCATION_BLOCKS=$(generate_nginx_masking_block)
     
+    export HTTP3_LISTEN=""
+    if nginx -V 2>&1 | grep -q "with-http_v3_module"; then
+        export HTTP3_LISTEN="listen 443 quic;"
+    fi
+    
+    # Ensure headers_more module is loaded at top of nginx.conf if installed
+    if [[ -f /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so && -f /etc/nginx/nginx.conf ]]; then
+        if ! grep -q "ngx_http_headers_more_filter_module.so" /etc/nginx/nginx.conf; then
+            sed -i '1s|^|load_module modules/ngx_http_headers_more_filter_module.so;\n|' /etc/nginx/nginx.conf 2>/dev/null || true
+        fi
+    elif [[ -d /etc/nginx/modules-enabled && -f /etc/nginx/nginx.conf ]]; then
+        if ! grep -q "modules-enabled" /etc/nginx/nginx.conf; then
+            sed -i '1s|^|include /etc/nginx/modules-enabled/*.conf;\n|' /etc/nginx/nginx.conf 2>/dev/null || true
+        fi
+    fi
+
+    # Determine Server header mechanism
+    export SERVER_HEADER="add_header Server \"CloudFront\" always;"
+    if nginx -V 2>&1 | grep -qE "headers_more|headers-more" || ls /etc/nginx/modules-enabled/*headers* /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so >/dev/null 2>&1 || grep -q "ngx_http_headers_more" /etc/nginx/nginx.conf 2>/dev/null; then
+        export SERVER_HEADER="more_set_headers 'Server: CloudFront';"
+    fi
+
     # Create headers snippet
     mkdir -p /etc/nginx/snippets
     local template_headers="$SCRIPT_DIR/templates/nginx_cdn_headers.conf.template"
     
     if [[ -f "$template_headers" ]]; then
-        envsubst '$SECOND_LEVEL $EDGE_NODE_ID $CF_EDGE_ID $CF_POP $DOMAIN $INSTALL_DIR $CF_POP_REGION $AWS_REQ_ID' < "$template_headers" > /etc/nginx/snippets/cdn_headers.conf
+        envsubst '$SECOND_LEVEL $EDGE_NODE_ID $CF_EDGE_ID $CF_POP $DOMAIN $INSTALL_DIR $CF_POP_REGION $AWS_REQ_ID $SERVER_HEADER' < "$template_headers" > /etc/nginx/snippets/cdn_headers.conf
     else
         print_warning "Template headers not found. Using fallback."
         # Fallback heredoc
         cat > /etc/nginx/snippets/cdn_headers.conf <<END
-more_set_headers 'Server: CloudFront';
+${SERVER_HEADER}
 add_header X-Cache "Hit from cloudfront" always;
 add_header Via "1.1 ${CF_EDGE_ID}.cloudfront.net (CloudFront)" always;
 add_header Accept-Ranges "bytes" always;
@@ -238,8 +261,9 @@ END
     # Create site config
     local template_site="$SCRIPT_DIR/templates/nginx_site.conf.template"
     if [[ -f "$template_site" ]]; then
-        # Only replace DOMAIN, INSTALL_DIR, HOST_ID, AWS_REQ_ID
-        envsubst '$DOMAIN $INSTALL_DIR $HOST_ID $AWS_REQ_ID' < "$template_site" > /etc/nginx/sites-available/cdn
+        # Replace DOMAIN, INSTALL_DIR, HOST_ID, AWS_REQ_ID, HTTP3_LISTEN
+        envsubst '$DOMAIN $INSTALL_DIR $HOST_ID $AWS_REQ_ID $HTTP3_LISTEN' < "$template_site" > /etc/nginx/sites-available/cdn
+        sed -i 's/\${HTTP3_LISTEN}//g' /etc/nginx/sites-available/cdn
     else
         print_warning "Template site config not found. Using fallback."
         cat > /etc/nginx/sites-available/cdn <<EOF

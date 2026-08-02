@@ -72,6 +72,7 @@ generate_vless_reality_inbound() {
         fi
     fi
     
+    local handshake_server=$(get_setting "reality_handshake_server" "127.0.0.1")
     local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "vless-reality")) | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
@@ -87,7 +88,7 @@ generate_vless_reality_inbound() {
     "reality": {
       "enabled": true,
       "handshake": {
-        "server": "$sni",
+        "server": "$handshake_server",
         "server_port": 443
       },
       "private_key": "$private_key",
@@ -184,6 +185,7 @@ generate_xhttp_reality_inbound() {
         fi
     fi
     
+    local handshake_server=$(get_setting "reality_handshake_server" "127.0.0.1")
     local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "xhttp-reality")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
@@ -211,7 +213,7 @@ generate_xhttp_reality_inbound() {
     "reality": {
       "enabled": true,
       "handshake": {
-        "server": "$sni",
+        "server": "$handshake_server",
         "server_port": 443
       },
       "private_key": "$private_key",
@@ -390,25 +392,6 @@ add_protocol_logic() {
         fi
     fi
     
-    # Ensure certificates exist for TLS protocols
-    if [[ "$needs_tls" == true ]]; then
-        print_info "Checking certificates for $protocol..."
-        if command -v install_acme_sh &>/dev/null; then
-            install_acme_sh
-        else
-            print_error "ACME module not loaded"
-        fi
-    fi
-    
-    # If vless-ws or xhttp-stealth, update Nginx config
-    if [[ "$protocol" == "vless-ws" || "$protocol" == "xhttp-stealth" ]]; then
-        print_info "Updating Nginx configuration for Stealth Mode..."
-        local domain=$(get_setting "domain")
-        if [[ -n "$domain" ]]; then
-            setup_nginx_cdn "$domain"
-        fi
-    fi
-
     add_protocol_to_settings "$protocol"
 }
 
@@ -483,6 +466,11 @@ add_protocol() {
     
     add_protocol_logic "$protocol"
     
+    local domain=$(get_setting "domain")
+    if [[ -n "$domain" ]]; then
+        setup_nginx_cdn "$domain"
+    fi
+
     # Update config.json
     rebuild_config
     

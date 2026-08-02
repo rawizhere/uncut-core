@@ -17,12 +17,14 @@ map $msec $cache_age {
 server {
     listen 80 default_server;
     server_name _;
-    return 444;
+    server_tokens off;
+    return 301 https://$host$request_uri;
 }
 
 server {
     listen 80;
     server_name ${DOMAIN};
+    server_tokens off;
     
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/html;
@@ -35,18 +37,32 @@ server {
     }
 }
 
-# Default HTTPS server - Close connection for unknown SNI/IP
+# Default HTTPS server - Return S3 XML error for unknown SNI/IP
 server {
     listen 443 ssl http2 default_server;
     server_name _;
+    server_tokens off;
     ssl_certificate ${INSTALL_DIR}/certs/certificates/${DOMAIN}.crt;
     ssl_certificate_key ${INSTALL_DIR}/certs/certificates/${DOMAIN}.key;
-    return 444;
+
+    include /etc/nginx/snippets/cdn_headers.conf;
+    add_header x-amz-request-id "${AWS_REQ_ID}" always;
+    default_type application/xml;
+
+    return 403 '<?xml version="1.0" encoding="UTF-8"?>
+<Error>
+    <Code>AccessDenied</Code>
+    <Message>Access Denied</Message>
+    <RequestId>${AWS_REQ_ID}</RequestId>
+    <HostId>${HOST_ID}</HostId>
+    <Resource>/</Resource>
+</Error>';
 }
 
 # HTTPS server - CDN masking
 server {
     listen 443 ssl http2;
+    ${HTTP3_LISTEN}
     server_name ${DOMAIN};
     server_tokens off;
 
@@ -91,10 +107,6 @@ server {
         include /etc/nginx/snippets/cdn_headers.conf;
         root /var/www/cdn;
         expires 30d;
-        add_header Cache-Control "public, immutable";
-        # Randomize cache status for realism
-        set $cache_type "Hit from cloudfront";
-        add_header X-Cache "$cache_type" always;
         try_files $uri =404;
     }
 
@@ -103,6 +115,16 @@ server {
         include /etc/nginx/snippets/cdn_headers.conf;
         add_header x-amz-request-id "${AWS_REQ_ID}" always;
         default_type application/xml;
+
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS, POST, PUT, DELETE" always;
+            add_header Access-Control-Allow-Headers "*" always;
+            add_header Content-Length 0;
+            add_header Content-Type "text/plain";
+            return 200;
+        }
+
         return 403 '<?xml version="1.0" encoding="UTF-8"?>
 <Error>
     <Code>AccessDenied</Code>

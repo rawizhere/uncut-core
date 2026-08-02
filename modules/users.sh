@@ -456,6 +456,7 @@ add_client() {
         read -p "Your choice: " p_choice
         
         local selected_protos=()
+        p_choice=$(echo "$p_choice" | tr ',' ' ')
         if [[ "$p_choice" == "all" ]]; then
             selected_protos=("${protocols[@]}")
         else
@@ -588,7 +589,7 @@ show_client_links_internal() {
     echo ""
     
     local active_server_protos=($(get_protocols))
-    local client_protos=$(jq -r --arg uuid "$uuid" '.[] | select(.uuid == $uuid) | .protocols?[]?' "$CLIENTS_FILE" 2>/dev/null)
+    local client_protos=$(jq -r --arg uuid "$uuid" '.[] | select(.uuid == $uuid) | .protocols? // [] | map(split(" ")) | flatten | map(select(. != "")) | .[]' "$CLIENTS_FILE" 2>/dev/null)
     
     if [[ -n "$client_protos" ]]; then
         local protocol
@@ -758,32 +759,30 @@ edit_client() {
     echo "Current protocols: ${current_protos:-None}"
     echo ""
     
-    local all_protocols=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
-    echo "Select new protocol list:"
-    for i in "${!all_protocols[@]}"; do
-        echo "$((i+1))) ${all_protocols[$i]}"
+    local protocols=($(get_protocols))
+    if [[ ${#protocols[@]} -eq 0 ]]; then
+        print_warning "No protocols active on server"
+        return
+    fi
+
+    echo "Select protocols for client '$name':"
+    for i in "${!protocols[@]}"; do
+        echo "$((i+1))) ${protocols[$i]}"
     done
     echo "Example: 1 2 4, or 'all', or leave empty for none"
     read -p "Your choice: " p_choice
     
     local selected_protos=()
+    p_choice=$(echo "$p_choice" | tr ',' ' ')
     if [[ "$p_choice" == "all" ]]; then
-        selected_protos=("${all_protocols[@]}")
+        selected_protos=("${protocols[@]}")
     else
         for idx in $p_choice; do
-            if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "${#all_protocols[@]}" ]]; then
-                selected_protos+=("${all_protocols[$((idx-1))]}")
+            if [[ "$idx" =~ ^[0-9]+$ ]] && [[ "$idx" -ge 1 ]] && [[ "$idx" -le "${#protocols[@]}" ]]; then
+                selected_protos+=("${protocols[$((idx-1))]}")
             fi
         done
     fi
-
-    # Ensure selected protocols exist on server
-    for p in "${selected_protos[@]}"; do
-        if ! protocol_exists "$p"; then
-            print_info "Enabling protocol '$p' on server..."
-            add_protocol_logic "$p"
-        fi
-    done
 
     local selected_protos_json=$(printf "%s\n" "${selected_protos[@]}" | tr ' ' '\n' | jq -R 'select(. != "")' | jq -s -c 'flatten | unique' || echo "[]")
     
@@ -859,7 +858,7 @@ migrate_clients_to_v2() {
             fi
             
             # 2. protocols
-            if [[ -z "$protos" || "$protos" == "null" || "$protos" == "[]" ]]; then
+            if [[ -z "$protos" || "$protos" == "null" ]]; then
                 protos="$active_protos_json"
             else
                 # Sanitize: flatten and unique

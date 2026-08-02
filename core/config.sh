@@ -129,20 +129,13 @@ set_setting() {
     mv "$tmp" "$SETTINGS_FILE"
 }
 
-# Add protocol to settings.json and update existing clients
+# Add protocol to settings.json
 add_protocol_to_settings() {
     local protocol=$1
     local tmp=$(mktemp)
     # Ensure protocol is split by space if accidentally passed as one string
     jq --arg proto "$protocol" '.protocols += ($proto | split(" ")) | .protocols |= (flatten | map(select(. != "")) | unique)' "$SETTINGS_FILE" > "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
-    
-    # Also add new protocol to existing clients
-    if [[ -f "$CLIENTS_FILE" ]]; then
-        local ctmp=$(mktemp)
-        jq --arg proto "$protocol" 'map(.protocols += ($proto | split(" ")) | .protocols |= (flatten | map(select(. != "")) | unique))' "$CLIENTS_FILE" > "$ctmp"
-        mv "$ctmp" "$CLIENTS_FILE"
-    fi
 }
 
 # Remove protocol from settings.json

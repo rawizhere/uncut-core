@@ -176,6 +176,7 @@ setup_firewall() {
     # Allow proxy ports
     ufw allow 80/tcp comment 'HTTP/ACME' > /dev/null 2>&1
     ufw allow 443/tcp comment 'HTTPS/CDN' > /dev/null 2>&1
+    ufw allow 443/udp comment 'HTTP/3 QUIC' > /dev/null 2>&1
     ufw allow 2083/tcp comment 'VLESS Reality' > /dev/null 2>&1
     ufw allow 2053/tcp comment 'XHTTP' > /dev/null 2>&1
     ufw allow 8443/tcp comment 'XHTTP Reality' > /dev/null 2>&1

@@ -6,6 +6,19 @@ is_cert_valid() {
         return 1
     fi
     
+    # Reject self-signed certificates
+    local issuer_raw=$(openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | cut -d= -f2-)
+    local subject_raw=$(openssl x509 -in "$cert_file" -noout -subject 2>/dev/null | cut -d= -f2-)
+    
+    if [[ -z "$issuer_raw" || "$issuer_raw" == "$subject_raw" ]]; then
+        return 1
+    fi
+
+    # Ensure certificate is issued by a recognized CA (e.g. Let's Encrypt / ZeroSSL)
+    if ! openssl x509 -in "$cert_file" -noout -issuer 2>/dev/null | grep -qE "Let's Encrypt|ZeroSSL|Encryption|Authority|Trust|R3|R10|R11"; then
+        return 1
+    fi
+
     local expiry_date=$(openssl x509 -in "$cert_file" -noout -enddate | cut -d= -f2)
     local expiry_epoch=$(date -d "$expiry_date" +%s 2>/dev/null)
     
@@ -39,20 +52,15 @@ install_acme_sh() {
     
     mkdir -p "$INSTALL_DIR/certs/certificates"
 
-    # Pre-generate self-signed cert if missing so services never crash on load
-    if [[ ! -f "$cert_crt" || ! -f "$cert_key" ]]; then
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout "$cert_key" \
-            -out "$cert_crt" \
-            -subj "/CN=$domain" >/dev/null 2>&1 || true
-        chmod 644 "$cert_crt" 2>/dev/null || true
-        chmod 600 "$cert_key" 2>/dev/null || true
-    fi
-
     if [[ "$force_issue" == "false" ]] && is_cert_valid "$cert_crt"; then
         print_info "Certificates already exist and are valid. Skipping issuance."
         print_success "Using existing certificates: $cert_crt"
         return
+    fi
+
+    # Remove invalid/self-signed cert if present
+    if ! is_cert_valid "$cert_crt"; then
+        rm -f "$cert_crt" "$cert_key"
     fi
     
     print_info "Installing acme.sh..."
@@ -63,16 +71,14 @@ install_acme_sh() {
         fi
     fi
     
-    # Ensure acme.sh is using Let's Encrypt (ZeroSSL is flaky)
+    # Ensure acme.sh is using Let's Encrypt
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1
 
     # Issue certificate
-    print_info "Issuing SSL certificate via Webroot (Zero Downtime)..."
+    print_info "Issuing SSL certificate via Let's Encrypt (Webroot)..."
     
-    mkdir -p "$INSTALL_DIR/certs/certificates"
     mkdir -p "/var/www/html"
 
-    # We use --webroot so Nginx doesn't need to be stopped
     if /root/.acme.sh/acme.sh --issue --webroot /var/www/html -d "$domain" --server letsencrypt --force; then
         print_success "Certificate issued"
         
@@ -80,36 +86,21 @@ install_acme_sh() {
         print_info "Installing certificate..."
         
         /root/.acme.sh/acme.sh --install-cert -d "$domain" \
-            --key-file       "$INSTALL_DIR/certs/certificates/$domain.key" \
-            --fullchain-file "$INSTALL_DIR/certs/certificates/$domain.crt" \
+            --key-file       "$cert_key" \
+            --fullchain-file "$cert_crt" \
             --reloadcmd     "systemctl restart nginx sing-box >/dev/null 2>&1 || true"
             
         /root/.acme.sh/acme.sh --install-cronjob >/dev/null 2>&1 || true
 
-        chmod 644 "$INSTALL_DIR/certs/certificates/$domain.crt"
-        chmod 600 "$INSTALL_DIR/certs/certificates/$domain.key"
+        chmod 644 "$cert_crt"
+        chmod 600 "$cert_key"
         
-        print_success "Certificate installed"
+        print_success "Let's Encrypt certificate installed successfully"
     else
-        print_error "Failed to issue certificate"
-        
-        # Fallback to self-signed
-        print_warning "Falling back to self-signed certificate..."
-        
-        if openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout "$INSTALL_DIR/certs/certificates/$domain.key" \
-            -out "$INSTALL_DIR/certs/certificates/$domain.crt" \
-            -subj "/CN=$domain"; then
-            
-            chmod 644 "$INSTALL_DIR/certs/certificates/$domain.crt"
-            chmod 600 "$INSTALL_DIR/certs/certificates/$domain.key"
-            
-            print_success "Self-signed certificate created"
-        else
-            print_error "Failed to generate self-signed certificate"
-        fi
+        print_error "Failed to issue Let's Encrypt certificate for $domain"
+        return 1
     fi
-    
+
     # Final check
     if [[ ! -f "$cert_crt" ]]; then
         print_error "Critical: Certificate file not found along path: $cert_crt"
