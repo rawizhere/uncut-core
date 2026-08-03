@@ -16,6 +16,7 @@ fi
 
 # Parse CLI arguments
 export UNATTENDED=false
+export UPDATE_ONLY=false
 export PROTOCOLS="default"
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
         --clients) export CLIENTS="$2"; shift 2 ;;
         --ssh-port) export SSH_PORT="$2"; shift 2 ;;
         --auto) export UNATTENDED=true; shift ;;
+        --update|-u|update) export UPDATE_ONLY=true; shift ;;
         *) shift ;;
     esac
 done
@@ -109,7 +111,10 @@ systemctl enable --now uncut-noise.timer >/dev/null 2>&1 || true
 
 echo -e "${GREEN}Installation files updated!${NC}"
 
-if [[ "$UNATTENDED" == "true" ]]; then
+if [[ "$UPDATE_ONLY" == "true" ]]; then
+    echo -e "${YELLOW}Running core update...${NC}"
+    raw update
+elif [[ "$UNATTENDED" == "true" ]]; then
     echo -e "${YELLOW}Starting unattended installation...${NC}"
     raw --auto
 else

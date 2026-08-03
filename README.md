@@ -30,6 +30,20 @@ Unattended:
 curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- --domain domain.com --email email@site.com --country DE --sni dl.google.com --protocols default --ssh-port 1488 --clients "user1,user2"
 ```
 
+### Update
+
+Direct CLI update:
+
+```bash
+raw update
+```
+
+Via installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- update
+```
+
 ### Flags
 
 | Flag | Description | Default |
@@ -42,11 +56,13 @@ curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.s
 | `--ssh-port` | Custom SSH listening port | `22` |
 | `--clients` | Comma-separated list of client names | Optional |
 | `--auto` | Run in non-interactive mode | `false` |
+| `--update`, `update`, `-u` | Run update mode | `false` |
 
 ### Usage
 
 ```bash
-raw
+raw        # Open interactive menu
+raw update # Quick core update
 ```
 
 ### Tree
