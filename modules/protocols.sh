@@ -72,7 +72,7 @@ generate_vless_reality_inbound() {
         fi
     fi
     
-    local handshake_server=$(get_setting "reality_handshake_server" "127.0.0.1")
+    local handshake_server=$(get_setting "reality_handshake_server" "$sni")
     local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "vless-reality")) | {uuid: .uuid, flow: "xtls-rprx-vision"}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
@@ -185,7 +185,7 @@ generate_xhttp_reality_inbound() {
         fi
     fi
     
-    local handshake_server=$(get_setting "reality_handshake_server" "127.0.0.1")
+    local handshake_server=$(get_setting "reality_handshake_server" "$sni")
     local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "xhttp-reality")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     
     cat <<EOF
