@@ -1,5 +1,26 @@
 #!/bin/bash
 
+get_server_ip() {
+    local ip=$(curl -s --connect-timeout 3 https://api.ipify.org 2>/dev/null || \
+               curl -s --connect-timeout 3 https://ifconfig.me 2>/dev/null || \
+               curl -s --connect-timeout 3 https://api.ip.sb/ip 2>/dev/null)
+    echo "${ip:-Unknown}"
+}
+
+check_and_sync_server_ip() {
+    local current_ip=$(get_server_ip)
+    local saved_ip=$(get_setting "server_ip")
+    
+    if [[ -n "$current_ip" && "$current_ip" != "Unknown" ]]; then
+        if [[ "$saved_ip" != "$current_ip" ]]; then
+            print_info "Server IP auto-synced: ${saved_ip:-None} -> $current_ip"
+            set_setting "server_ip" "$current_ip"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # Domain validation
 validate_domain() {
     local domain=$1
