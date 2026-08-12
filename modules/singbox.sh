@@ -559,6 +559,59 @@ update_uncut_core() {
     fi
 }
 
+change_domain() {
+    echo ""
+    echo "=== Change Domain ==="
+    echo ""
+    local current_domain=$(get_setting "domain")
+    echo "Current domain: ${current_domain:-None}"
+    echo ""
+    read -p "Enter new domain or subdomain (e.g. cdn4.pabogate.com): " new_domain
+    
+    if [[ -z "$new_domain" ]]; then
+        print_error "Domain cannot be empty"
+        return 1
+    fi
+    
+    if [[ "$new_domain" == "$current_domain" ]]; then
+        print_info "Domain is unchanged."
+        return 0
+    fi
+    
+    if ! validate_domain "$new_domain"; then
+        print_error "Invalid domain format"
+        return 1
+    fi
+    
+    print_info "Checking DNS resolution for $new_domain..."
+    if ! check_domain_dns "$new_domain"; then
+        print_warning "DNS check failed for $new_domain. Make sure A record points to this server IP."
+        read -p "Proceed anyway? y/n: " confirm
+        if [[ "$confirm" != "y" ]]; then
+            return 1
+        fi
+    fi
+    
+    print_info "Updating domain to $new_domain..."
+    set_setting "domain" "$new_domain"
+    export DOMAIN="$new_domain"
+    
+    print_info "Issuing SSL certificate for $new_domain..."
+    install_acme_sh --force
+    
+    print_info "Rebuilding Nginx CDN configuration..."
+    setup_nginx_cdn
+    
+    print_info "Rebuilding Sing-box configuration..."
+    rebuild_config
+    
+    print_info "Regenerating all client subscriptions..."
+    regenerate_all_subscriptions
+    
+    systemctl restart nginx sing-box >/dev/null 2>&1 || true
+    print_success "Domain successfully updated to $new_domain!"
+}
+
 update_singbox() {
     echo ""
     echo "=== Update Sing-box ==="
