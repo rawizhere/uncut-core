@@ -273,6 +273,11 @@ get_subscription_url() {
 rebuild_config() {
     print_info "Updating configuration..."
     
+    # Auto-sync server IP if changed
+    if command -v check_and_sync_server_ip &>/dev/null; then
+        check_and_sync_server_ip
+    fi
+    
     # Backup current config
     local backup_file="${CONFIG_FILE}.backup"
     if [[ -f "$CONFIG_FILE" ]]; then
