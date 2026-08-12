@@ -83,7 +83,7 @@ main() {
             7) remove_protocol ;;
             8) list_protocols ;;
             9) change_sni ;;
-            10) rotate_masking_salt ;;
+            10) change_domain ;;
             11) check_system_health ;;
             12) restart_service ;;
             13) show_logs ;;
@@ -94,6 +94,7 @@ main() {
             18) change_singbox_version ;;
             19) install_singbox ;;
             20) uninstall_singbox ;;
+            21) rotate_masking_salt ;;
             0) exit 0 ;;
             *) [[ -n "$choice" ]] && print_error "Invalid choice" ;;
         esac
