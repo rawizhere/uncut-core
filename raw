@@ -19,7 +19,6 @@ source "$SCRIPT_DIR/modules/singbox.sh"
 source "$SCRIPT_DIR/modules/protocols.sh"
 source "$SCRIPT_DIR/modules/users.sh"
 source "$SCRIPT_DIR/modules/mtproto.sh"
-source "$SCRIPT_DIR/modules/shadowtls.sh"
 
 # Setup Trap
 trap 'echo -e "\n${YELLOW}Exiting...${NC}"; exit 0' INT TERM
@@ -28,6 +27,7 @@ trap 'echo -e "\n${YELLOW}Exiting...${NC}"; exit 0' INT TERM
 main() {
     check_root
     check_os
+    ensure_essential_deps
     
     # Initialize settings if missing
     if [[ -d "$INSTALL_DIR" ]]; then
@@ -39,11 +39,16 @@ main() {
     
     check_script_updates
     migrate_clients_to_v2
+    migrate_legacy_protocols
     
     # Handle Direct Command Line Arguments
     case "$1" in
         "update"|"--update"|"-u")
             update_uncut_core
+            exit 0
+            ;;
+        "--backup")
+            backup_core
             exit 0
             ;;
         "--auto")
@@ -77,24 +82,16 @@ main() {
             1) add_client ;;
             2) edit_client ;;
             3) remove_client ;;
-            4) list_clients ;;
-            5) show_client_links ;;
-            6) add_protocol ;;
-            7) remove_protocol ;;
-            8) list_protocols ;;
-            9) change_sni ;;
-            10) change_domain ;;
-            11) check_system_health ;;
-            12) restart_service ;;
-            13) show_logs ;;
-            14) install_acme_sh --force ;;
-            15) mtproto_menu ;;
-            16) update_uncut_core ;;
-            17) toggle_auto_update ;;
-            18) change_singbox_version ;;
-            19) install_singbox ;;
-            20) uninstall_singbox ;;
-            21) rotate_masking_salt ;;
+            4) show_client_links ;;
+            5) update_uncut_core ;;
+            6) change_singbox_version ;;
+            7) install_acme_sh --force ;;
+            8) change_domain ;;
+            9) check_system_health ;;
+            10) restart_service ;;
+            11) show_logs ;;
+            12) mtproto_menu ;;
+            13) uninstall_singbox ;;
             0) exit 0 ;;
             *) [[ -n "$choice" ]] && print_error "Invalid choice" ;;
         esac

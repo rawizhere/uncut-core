@@ -11,6 +11,84 @@ export SERVICE_FILE="/etc/systemd/system/sing-box.service"
 export LOGROTATE_FILE="/etc/logrotate.d/sing-box"
 
 # Initialize settings
+
+VALID_PROTOCOLS="xhttp-stealth vless-ws vless-httpupgrade vless-grpc vless-reality tuic"
+
+migrate_legacy_protocols() {
+    if [[ ! -f "$SETTINGS_FILE" ]]; then
+        return 0
+    fi
+
+    local changed=0
+    local valid_json=$(printf '%s\n' $VALID_PROTOCOLS | jq -R . | jq -s -c .)
+
+    local tmp=$(mktemp)
+    if jq --argjson valid "$valid_json"         '.protocols = ((.protocols // []) | map(select(. as $p | $valid | index($p))))'         "$SETTINGS_FILE" > "$tmp" 2>/dev/null; then
+        if ! cmp -s "$SETTINGS_FILE" "$tmp"; then
+            mv "$tmp" "$SETTINGS_FILE"
+            changed=1
+        else
+            rm -f "$tmp"
+        fi
+    else
+        rm -f "$tmp"
+    fi
+
+    if [[ -f "$CLIENTS_FILE" ]]; then
+        local ctmp=$(mktemp)
+        if jq --argjson valid "$valid_json"             '[.[] | .protocols = ((.protocols // []) | map(select(. as $p | $valid | index($p)))) | select((.protocols | length) > 0)]'             "$CLIENTS_FILE" > "$ctmp" 2>/dev/null; then
+            if ! cmp -s "$CLIENTS_FILE" "$ctmp"; then
+                mv "$ctmp" "$CLIENTS_FILE"
+                changed=1
+            else
+                rm -f "$ctmp"
+            fi
+        else
+            rm -f "$ctmp"
+        fi
+    fi
+
+    if [[ "$changed" == "1" ]]; then
+        print_warning "Removed legacy protocols from settings/clients. Rebuilding..."
+        rebuild_config 2>/dev/null || true
+        regenerate_all_subscriptions 2>/dev/null || true
+    fi
+}
+
+
+backup_core() {
+    local backup_dir="$INSTALL_DIR/backups"
+    mkdir -p "$backup_dir"
+    local stamp=$(date +%Y%m%d_%H%M%S)
+    local target="$backup_dir/uncut_backup_${stamp}.tar.gz"
+
+    local files=("$SETTINGS_FILE" "$CLIENTS_FILE" "$CONFIG_FILE")
+    local exists=0
+    for f in "${files[@]}"; do
+        [[ -f "$f" ]] && exists=1
+    done
+    [[ -f /etc/nginx/nginx.conf ]] && [[ -d /etc/nginx/sites-enabled ]] && exists=1
+
+    if [[ "$exists" == "0" ]]; then
+        return 0
+    fi
+
+    tar -czf "$target" -C /         "${INSTALL_DIR#/}/settings.json"         "${INSTALL_DIR#/}/clients.json"         "${INSTALL_DIR#/}/config.json"         "etc/nginx" 2>/dev/null
+
+    ls -1t "$backup_dir"/uncut_backup_*.tar.gz 2>/dev/null | tail -n +15 | xargs -r rm -f
+    print_success "Core + Nginx config backed up ($(basename "$target"))"
+}
+
+install_backup_cron() {
+    local cron_line="0 4 * * * ${SCRIPT_DIR}/raw --backup"
+    if ! crontab -l 2>/dev/null | grep -qF -- "$cron_line"; then
+        ( crontab -l 2>/dev/null; echo "$cron_line" ) | crontab -
+        print_success "Daily backup cron installed (04:00)"
+    else
+        print_info "Backup cron already present"
+    fi
+}
+
 init_settings() {
     mkdir -p "$INSTALL_DIR"
     if [[ ! -f "$SETTINGS_FILE" ]]; then
@@ -36,8 +114,6 @@ init_settings() {
     [[ -z $(get_setting "dpi_hello_padding_enabled") ]] && set_setting "dpi_hello_padding_enabled" "true"
     
     # Protocol Keys Initialization
-    [[ -z $(get_setting "sudoku_key") ]] && set_setting "sudoku_key" "$(openssl rand -hex 16)"
-    [[ -z $(get_setting "snell_psk") ]] && set_setting "snell_psk" "$(openssl rand -hex 16)"
     [[ -z $(get_setting "reality_short_id") ]] && set_setting "reality_short_id" "$(generate_short_id)"
     
     if [[ -z $(get_setting "reality_private_key") || -z $(get_setting "reality_public_key") ]]; then
@@ -52,8 +128,6 @@ init_settings() {
         fi
     fi
 
-    set_setting "traffic_shaping_level" "high"
-    set_setting "shadow_tls_enabled" "false"
     
     print_success "Settings initialized"
 }
@@ -72,7 +146,7 @@ get_salted_path() {
     base="${base#/}"
     base="${base%/}"
     
-    echo "/${base}/${salt}/stream"
+    echo "/${base}/${salt}"
 }
 
 # Helper for DPI parameters in links
@@ -97,7 +171,8 @@ get_dpi_link_params() {
 # Define Masking Presets
 get_theme_data() {
     # Exclusive Theme: CDN Sync (AWS CloudFront/S3 style)
-    echo "paths:/storage/v2/sync,/media/origin/push,/cdn/worker/runtime|headers:X-Amz-Cf-Id:redacted,X-Edge-Origin-Shield:active|mode:streaming|fallback:aws.amazon.com"
+    # Path 1: XHTTP Stealth, Path 2: VLESS WS, Path 3: VLESS HTTPUpgrade, Path 4: VLESS gRPC
+    echo "paths:/assets/js,/assets/css,/assets/img,/assets/fonts|headers:X-Amz-Cf-Id:redacted,X-Edge-Origin-Shield:active|mode:streaming|fallback:aws.amazon.com"
 }
 
 # Get value from settings.json
@@ -124,27 +199,46 @@ get_setting() {
 set_setting() {
     local key=$1
     local value=$2
+    
+    mkdir -p "$(dirname "$SETTINGS_FILE")"
+    if [[ ! -f "$SETTINGS_FILE" ]] || [[ ! -s "$SETTINGS_FILE" ]] || ! jq empty "$SETTINGS_FILE" >/dev/null 2>&1; then
+        echo '{}' > "$SETTINGS_FILE"
+    fi
+
     local tmp=$(mktemp)
-    jq --arg key "$key" --arg val "$value" '.[$key] = $val' "$SETTINGS_FILE" > "$tmp"
-    mv "$tmp" "$SETTINGS_FILE"
+    if jq --arg key "$key" --arg val "$value" '.[$key] = $val' "$SETTINGS_FILE" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$SETTINGS_FILE"
+    else
+        rm -f "$tmp"
+    fi
 }
 
 # Add protocol to settings.json
 add_protocol_to_settings() {
     local protocol=$1
+    if [[ ! -f "$SETTINGS_FILE" ]] || [[ ! -s "$SETTINGS_FILE" ]] || ! jq empty "$SETTINGS_FILE" >/dev/null 2>&1; then
+        echo '{"protocols": []}' > "$SETTINGS_FILE"
+    fi
     local tmp=$(mktemp)
-    # Ensure protocol is split by space if accidentally passed as one string
-    jq --arg proto "$protocol" '.protocols += ($proto | split(" ")) | .protocols |= (flatten | map(select(. != "")) | unique)' "$SETTINGS_FILE" > "$tmp"
-    mv "$tmp" "$SETTINGS_FILE"
+    if jq --arg proto "$protocol" '.protocols = ((.protocols // []) + ($proto | split(" ")) | flatten | map(select(. != "")) | unique)' "$SETTINGS_FILE" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$SETTINGS_FILE"
+    else
+        rm -f "$tmp"
+    fi
 }
 
 # Remove protocol from settings.json
 remove_protocol_from_settings() {
     local protocol=$1
+    if [[ ! -f "$SETTINGS_FILE" ]] || [[ ! -s "$SETTINGS_FILE" ]] || ! jq empty "$SETTINGS_FILE" >/dev/null 2>&1; then
+        return 0
+    fi
     local tmp=$(mktemp)
-    # Remove from settings
-    jq --arg proto "$protocol" '.protocols -= [$proto]' "$SETTINGS_FILE" > "$tmp"
-    mv "$tmp" "$SETTINGS_FILE"
+    if jq --arg proto "$protocol" '.protocols |= (map(select(. != $proto)))' "$SETTINGS_FILE" > "$tmp" 2>/dev/null; then
+        mv "$tmp" "$SETTINGS_FILE"
+    else
+        rm -f "$tmp"
+    fi
     
     # Remove from all clients
     if [[ -f "$CLIENTS_FILE" ]]; then

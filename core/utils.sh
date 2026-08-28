@@ -40,6 +40,14 @@ check_os() {
     fi
 }
 
+ensure_essential_deps() {
+    if ! command -v jq >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1 || ! command -v dig >/dev/null 2>&1; then
+        print_info "Installing essential system dependencies (jq, curl, dnsutils)..."
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y -qq jq curl tar openssl ca-certificates dnsutils >/dev/null 2>&1 || true
+    fi
+}
+
 check_internet() {
     if ! curl -s --connect-timeout 3 https://1.1.1.1 >/dev/null 2>&1; then
         print_error "No internet connection"

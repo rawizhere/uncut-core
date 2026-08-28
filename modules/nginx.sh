@@ -54,92 +54,111 @@ generate_nginx_masking_block() {
     IFS=',' read -ra extra_headers <<< "$headers_str"
     
     local blocks=""
+    # Path mappings:
+    # Index 0: xhttp-stealth (Port 10002)
+    # Index 1: vless-ws (Port 10001)
+    # Index 2: vless-httpupgrade (Port 10004)
+    # Index 3: vless-grpc (Port 10003)
     local i=0
     for p in "${paths[@]}"; do
         local salted_path=$(get_salted_path "$p")
         
-        blocks+="    # Masked Location: $p\n"
-        blocks+="    location ~* ^${salted_path} {\n"
-        blocks+="        proxy_redirect off;\n"
-        
-        # Custom logic per protocol
-        if (( i % 2 == 0 )); then
-             # VLESS-WS (Even) -> Port 10001
-             blocks+="        proxy_pass http://127.0.0.1:10001;\n"
-             blocks+="        proxy_set_header Upgrade \$http_upgrade;\n"
-             blocks+="        proxy_set_header Connection \"upgrade\";\n"
-             blocks+="        proxy_read_timeout 300s;\n"
-        else
-             # XHTTP-Stealth (Odd) -> Port 10002
-             # Needs NO buffering and NO Upgrade headers
-             blocks+="        proxy_pass http://127.0.0.1:10002;\n"
-             blocks+="        proxy_buffering off;\n"
-             blocks+="        proxy_request_buffering off;\n"
-             blocks+="        tcp_nodelay on;\n"
-             blocks+="        client_max_body_size 0;\n"
-             blocks+="        proxy_read_timeout 1h;\n"
-             blocks+="        proxy_send_timeout 1h;\n"
-             blocks+="        proxy_set_header X-Forwarded-Proto \$scheme;\n"
+        if [[ $i -lt 3 ]]; then
+            blocks+="    # Masked Location: $p\n"
+            blocks+="    location ^~ ${salted_path} {\n"
         fi
         
-        blocks+="        proxy_http_version 1.1;\n"
-        i=$((i+1))
-        blocks+="        proxy_set_header Host \$host;\n"
-        blocks+="        proxy_set_header X-Real-IP \$remote_addr;\n"
-        blocks+="        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n"
-        
-        # Add preset specific headers
-        for h in "${extra_headers[@]}"; do
-            [[ -z "$h" ]] && continue
-            local h_name=$(echo "$h" | cut -d':' -f1)
-            local h_val=$(echo "$h" | cut -d':' -f2-)
-            blocks+="        add_header $h_name \"$h_val\" always;\n"
-        done
-        
-        blocks+="    }\n\n"
-    done
-    
-    # Also add standard CDN paths inside the server block
-    blocks+="    # API endpoints (fake CDN behavior)\n"
-    blocks+="    location /api/status {\n"
-    blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
-    blocks+="        default_type \"application/json\";\n"
-    blocks+="        return 200 '{\"status\":\"ok\",\"node\":\"${SECOND_LEVEL}\",\"region\":\"${CF_POP_REGION}\"}';\n"
-    blocks+="    }\n\n"
-    
-    blocks+="    # robots.txt (every CDN has this)\n"
-    blocks+="    location = /robots.txt {\n"
-    blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
-    blocks+="        default_type \"text/plain\";\n"
-    blocks+="        return 200 \"User-agent: *\\nDisallow: /\\n\";\n"
-    blocks+="    }\n\n"
-    
-    blocks+="    # security.txt\n"
-    blocks+="    location = /.well-known/security.txt {\n"
-    blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
-    blocks+="        default_type \"text/plain\";\n"
-    blocks+="        return 200 \"Contact: security@cloudfront.net\\nExpires: 2027-12-31T23:59:59.000Z\\n\";\n"
-    blocks+="    }\n\n"
-    
-    # Honey Pot Locations (Trigger for Fail2Ban)
-    local honeypots=("/.env" "/.git" "/wp-login.php" "/xmlrpc.php" "/.aws/credentials" "/config.php" "/.ssh")
-    blocks+="    # Honey Pot: Instant Ban Targets\n"
-    for hp in "${honeypots[@]}"; do
-        blocks+="    location = $hp {\n"
-        blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
-        blocks+="        add_header x-amz-request-id \"\$request_id\" always;\n"
-        blocks+="        default_type application/xml;\n"
-        blocks+="        return 403 '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<Error>\\n    <Code>AccessDenied</Code>\\n    <Message>Access Denied</Message>\\n    <RequestId>$AWS_REQ_ID</RequestId>\\n    <HostId>$HOST_ID</HostId>\\n    <Resource>$hp</Resource>\\n</Error>';\n"
-        blocks+="    }\n\n"
-    done
+        local active=false
+        case $i in
+            0)
+                if protocol_exists "xhttp-stealth"; then
+                    active=true
+                    blocks+="        proxy_pass http://127.0.0.1:10002;\n"
+                    blocks+="        proxy_http_version 1.1;\n"
+                    blocks+="        proxy_buffering off;\n"
+                    blocks+="        proxy_request_buffering off;\n"
+                    blocks+="        tcp_nodelay on;\n"
+                    blocks+="        client_max_body_size 0;\n"
+                    blocks+="        proxy_read_timeout 1h;\n"
+                    blocks+="        proxy_send_timeout 1h;\n"
+                    blocks+="        proxy_set_header Host \$host;\n"
+                    blocks+="        proxy_set_header X-Real-IP \$remote_addr;\n"
+                    blocks+="        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n"
+                    blocks+="        proxy_set_header X-Forwarded-Proto \$scheme;\n"
+                fi
+                ;;
+            1)
+                if protocol_exists "vless-ws"; then
+                    active=true
+                    blocks+="        proxy_pass http://127.0.0.1:10001;\n"
+                    blocks+="        proxy_http_version 1.1;\n"
+                    blocks+="        proxy_buffering off;\n"
+                    blocks+="        proxy_request_buffering off;\n"
+                    blocks+="        tcp_nodelay on;\n"
+                    blocks+="        proxy_set_header Upgrade \$http_upgrade;\n"
+                    blocks+="        proxy_set_header Connection \"upgrade\";\n"
+                    blocks+="        proxy_read_timeout 300s;\n"
+                    blocks+="        proxy_set_header Host \$host;\n"
+                    blocks+="        proxy_set_header X-Real-IP \$remote_addr;\n"
+                    blocks+="        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n"
+                fi
+                ;;
+            2)
+                if protocol_exists "vless-httpupgrade"; then
+                    active=true
+                    blocks+="        proxy_pass http://127.0.0.1:10004;\n"
+                    blocks+="        proxy_http_version 1.1;\n"
+                    blocks+="        proxy_buffering off;\n"
+                    blocks+="        proxy_request_buffering off;\n"
+                    blocks+="        tcp_nodelay on;\n"
+                    blocks+="        proxy_set_header Upgrade \$http_upgrade;\n"
+                    blocks+="        proxy_set_header Connection \"upgrade\";\n"
+                    blocks+="        proxy_read_timeout 1h;\n"
+                    blocks+="        proxy_set_header Host \$host;\n"
+                    blocks+="        proxy_set_header X-Real-IP \$remote_addr;\n"
+                    blocks+="        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n"
+                fi
+                ;;
+            3)
+                if protocol_exists "vless-grpc"; then
+                    local salt=$(get_setting "protocol_salt")
+                    blocks+="    # Masked Location: EdgeContent\n"
+                    blocks+="    location ^~ /EdgeContent_${salt} {\n"
+                    blocks+="        grpc_pass grpc://127.0.0.1:10003;\n"
+                    blocks+="        client_max_body_size 0;\n"
+                    blocks+="        client_body_buffer_size 512k;\n"
+                    blocks+="        grpc_buffer_size 512k;\n"
+                    blocks+="        grpc_read_timeout 1h;\n"
+                    blocks+="        grpc_send_timeout 1h;\n"
+                    blocks+="        grpc_set_header Host \$host;\n"
+                    blocks+="        grpc_set_header X-Real-IP \$remote_addr;\n"
+                    blocks+="    }\n\n"
+                    active=true
+                    continue
+                fi
+                ;;
+        esac
 
-    blocks+="    # Favicon\n"
-    blocks+="    location = /favicon.ico {\n"
-    blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
-    blocks+="        add_header Content-Length \"0\" always;\n"
-    blocks+="        add_header Cache-Control \"public, max-age=86400\" always;\n"
-    blocks+="        return 204;\n"
-    blocks+="    }\n"
+        if [[ "$active" == "false" ]]; then
+            # Scanner / Inactive Fallback: Return AWS S3 XML 403
+            blocks+="        include /etc/nginx/snippets/cdn_headers.conf;\n"
+            blocks+="        add_header x-amz-request-id \"\$request_id\" always;\n"
+            blocks+="        default_type application/xml;\n"
+            blocks+="        return 403 '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<Error>\\n    <Code>AccessDenied</Code>\\n    <Message>Access Denied</Message>\\n    <RequestId>$AWS_REQ_ID</RequestId>\\n    <HostId>$HOST_ID</HostId>\\n    <Resource>$p</Resource>\\n</Error>';\n"
+        else
+            for h in "${extra_headers[@]}"; do
+                [[ -z "$h" ]] && continue
+                local h_name=$(echo "$h" | cut -d':' -f1)
+                local h_val=$(echo "$h" | cut -d':' -f2-)
+                blocks+="        add_header $h_name \"$h_val\" always;\n"
+            done
+        fi
+
+        if [[ $i -lt 3 ]]; then
+            blocks+="    }\n\n"
+        fi
+        i=$((i+1))
+    done
 
     echo -e "$blocks"
 }
@@ -147,8 +166,11 @@ generate_nginx_masking_block() {
 # Configure Nginx for CDN masking
 setup_nginx_cdn() {
     local domain=$1
-    
     if [[ -z "$domain" ]]; then
+        domain=$(get_setting "domain")
+    fi
+    
+    if [[ -z "$domain" || "$domain" == "null" ]]; then
         print_error "Domain not specified for Nginx configuration"
         return 1
     fi
@@ -162,7 +184,7 @@ setup_nginx_cdn() {
         # Skip installation, go straight to config generation
     else
         # Check Nginx installation & HTTP/3 QUIC support
-        if ! command -v nginx &> /dev/null || ! nginx -V 2>&1 | grep -q "with-http_v3_module"; then
+        if ! command -v nginx &> /dev/null; then
             print_info "Upgrading Nginx to latest version with HTTP/3 QUIC support..."
             apt-get update -qq >/dev/null 2>&1
             apt-get install -y software-properties-common >/dev/null 2>&1 || true
@@ -210,10 +232,6 @@ setup_nginx_cdn() {
     export AWS_REQ_ID="$aws_req_id"
     export XHTTP_LOCATION_BLOCKS=$(generate_nginx_masking_block)
     
-    export HTTP3_LISTEN=""
-    if nginx -V 2>&1 | grep -q "with-http_v3_module"; then
-        export HTTP3_LISTEN="listen 443 quic;"
-    fi
     
     # Ensure headers_more module is loaded at top of nginx.conf if installed
     if [[ -f /usr/lib/nginx/modules/ngx_http_headers_more_filter_module.so && -f /etc/nginx/nginx.conf ]]; then
@@ -234,7 +252,8 @@ setup_nginx_cdn() {
 
     # Create headers snippet
     mkdir -p /etc/nginx/snippets
-    local template_headers="$SCRIPT_DIR/templates/nginx_cdn_headers.conf.template"
+    local script_root="${SCRIPT_DIR:-$INSTALL_DIR}"
+    local template_headers="$script_root/templates/nginx_cdn_headers.conf.template"
     
     if [[ -f "$template_headers" ]]; then
         envsubst '$SECOND_LEVEL $EDGE_NODE_ID $CF_EDGE_ID $CF_POP $DOMAIN $INSTALL_DIR $CF_POP_REGION $AWS_REQ_ID $SERVER_HEADER' < "$template_headers" > /etc/nginx/snippets/cdn_headers.conf
@@ -259,27 +278,31 @@ END
     echo -e "$XHTTP_LOCATION_BLOCKS" > "$INSTALL_DIR/nginx_locations.conf"
 
     # Create site config
-    local template_site="$SCRIPT_DIR/templates/nginx_site.conf.template"
+    local script_root="${SCRIPT_DIR:-$INSTALL_DIR}"
+    local template_site="$script_root/templates/nginx_site.conf.template"
     if [[ -f "$template_site" ]]; then
-        # Replace DOMAIN, INSTALL_DIR, HOST_ID, AWS_REQ_ID, HTTP3_LISTEN
-        envsubst '$DOMAIN $INSTALL_DIR $HOST_ID $AWS_REQ_ID $HTTP3_LISTEN' < "$template_site" > /etc/nginx/sites-available/cdn
-        sed -i 's/\${HTTP3_LISTEN}//g' /etc/nginx/sites-available/cdn
+        envsubst '$DOMAIN $INSTALL_DIR $HOST_ID $AWS_REQ_ID' < "$template_site" > /etc/nginx/sites-available/cdn
+        
     else
         print_warning "Template site config not found. Using fallback."
         cat > /etc/nginx/sites-available/cdn <<EOF
-# Map for pseudo-random Age header (based on msec)
 map \$msec \$cache_age {
     ~0\$ "0";
-    ~1\$ "42";
-    ~2\$ "87";
-    ~3\$ "156";
-    ~4\$ "203";
+    ~1\$ "2";
+    ~2\$ "7";
+    ~3\$ "15";
+    ~4\$ "23";
     ~5\$ "0";
-    ~6\$ "91";
-    ~7\$ "134";
-    ~8\$ "267";
-    ~9\$ "15";
+    ~6\$ "35";
+    ~7\$ "0";
+    ~8\$ "48";
+    ~9\$ "61";
     default "0";
+}
+
+map \$http_upgrade \$connection_upgrade {
+    default upgrade;
+    ''      close;
 }
 
 # HTTP server - serves images and proxies ACME challenges
@@ -325,6 +348,11 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1h;
+    ssl_session_tickets on;
+    ssl_stapling on;
+    ssl_stapling_verify on;
 
     # CDN-like headers (base)
     include /etc/nginx/snippets/cdn_headers.conf;
@@ -332,6 +360,13 @@ server {
     # CORS headers (common for CDN)
     add_header Access-Control-Allow-Origin "*" always;
     add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+
+    # Proxy Defaults
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_http_version 1.1;
 
     # Subscriptions (Classic Path)
     location ~ "^/([a-f0-9]{32})$" {
@@ -341,7 +376,7 @@ server {
     }
 
     # Subscriptions (CDN Masked Path: Asset Injection Style)
-    location ~ "^/static/v1/auth/([a-f0-9]{32})\.bin$" {
+    location ~ "^/assets/js/([a-f0-9]{32})\.bin$" {
         alias /var/www/cdn/subs/\$1;
         default_type "application/octet-stream";
         add_header Content-Disposition "inline";
@@ -360,12 +395,6 @@ server {
         try_files \$uri =404;
     }
 
-    # API endpoints (fake CDN behavior)
-    location /api/status {
-        include /etc/nginx/snippets/cdn_headers.conf;
-        default_type "application/json";
-        return 200 '{"status":"ok","node":"${SECOND_LEVEL}","region":"${CF_POP_REGION}"}';
-    }
 
     # robots.txt (every CDN has this) - MUST be before location /
     location = /robots.txt {
@@ -389,10 +418,26 @@ server {
         return 204;
     }
 
-    # Everything else -> 403 (S3 XML style) - MUST be last
-    location / {
+    # Dynamic Stealth Locations (Populated by Manager)
+    include $INSTALL_DIR/nginx_locations.conf;
+
+    location /api/v1/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
+    location @s3error {
         include /etc/nginx/snippets/cdn_headers.conf;
-        add_header x-amz-request-id "\$request_id" always;
+            add_header x-amz-request-id "\$request_id" always;
+        add_header x-amz-bucket-region "eu-central-1" always;
         default_type application/xml;
         return 403 '<?xml version="1.0" encoding="UTF-8"?>
 <Error>
@@ -402,6 +447,33 @@ server {
     <HostId>${HOST_ID}</HostId>
     <Resource>/</Resource>
 </Error>';
+    }
+
+    # Telegram WEB Proxy Bridge (Direct bridge and WebSocket carrier)
+    location / {
+        # Check for Telegram Web Proxy bridge parameter or WebSocket upgrade
+        if (\$arg_bridge != "") {
+            proxy_pass http://127.0.0.1:8080;
+            break;
+        }
+        if (\$http_upgrade = "websocket") {
+            proxy_pass http://127.0.0.1:8080;
+            break;
+        }
+
+        # If OPTIONS preflight
+        if (\$request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS, POST, PUT, DELETE" always;
+            add_header Access-Control-Allow-Headers "*" always;
+            add_header Content-Length 0;
+            add_header Content-Type "text/plain";
+            return 200;
+        }
+
+        # Fallback to S3 XML 403 error for all scanner / unknown requests
+        error_page 403 = @s3error;
+        return 403;
     }
 }
 EOF
@@ -427,6 +499,9 @@ EOF
     fi
     if ! grep -q "zone=anti_scan" /etc/nginx/nginx.conf; then
         sed -i '/http {/a \    limit_req_zone $binary_remote_addr zone=anti_scan:10m rate=2r/s;' /etc/nginx/nginx.conf
+    fi
+    if ! grep -q "zone=anti_subs" /etc/nginx/nginx.conf; then
+        sed -i '/http {/a \    limit_req_zone $binary_remote_addr zone=anti_subs:10m rate=10r/s;' /etc/nginx/nginx.conf
     fi
     
     # Check configuration

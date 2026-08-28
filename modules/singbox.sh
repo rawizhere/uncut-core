@@ -305,6 +305,8 @@ install_singbox() {
     create_initial_configs 2>&1 | tee -a "$install_log"
     setup_logrotate 2>&1 | tee -a "$install_log"
     setup_firewall 2>&1 | tee -a "$install_log"
+    backup_core 2>&1 | tee -a "$install_log"
+    install_backup_cron 2>&1 | tee -a "$install_log"
     
     local reality_keys=$("$INSTALL_DIR/sing-box" generate reality-keypair 2>/dev/null)
     local reality_priv=$(echo "$reality_keys" | grep "PrivateKey:" | awk '{print $2}')
@@ -321,13 +323,16 @@ install_singbox() {
   "reality_private_key": "$reality_priv",
   "reality_public_key": "$reality_pub",
   "reality_short_id": "$reality_sid",
-  "hysteria_obfs_password": "$(openssl rand -hex 16)",
   "protocol_salt": "$(openssl rand -hex 4)",
   "masking_theme": "cdn_sync",
   "auto_update": "false",
   "protocols": [
-    "hysteria2",
-    "xhttp-stealth"
+    "xhttp-stealth",
+    "vless-ws",
+    "vless-httpupgrade",
+    "vless-grpc",
+    "vless-reality",
+    "tuic"
   ]
 }
 EOF
@@ -352,12 +357,12 @@ EOF
     local target_protocols="${PROTOCOLS:-default}"
     print_info "Configuring requested protocols: $target_protocols..."
     if [[ "$target_protocols" == "all" ]]; then
-        local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
+        local all_protos=("xhttp-stealth" "vless-ws" "vless-httpupgrade" "vless-grpc" "vless-reality" "tuic")
         for p in "${all_protos[@]}"; do
             add_protocol_logic "$p"
         done
     elif [[ "$target_protocols" == "default" ]]; then
-        local default_protos=("hysteria2" "vless-reality" "xhttp-reality")
+        local default_protos=("xhttp-stealth" "vless-ws" "vless-httpupgrade" "vless-grpc" "vless-reality" "tuic")
         for p in "${default_protos[@]}"; do
             add_protocol_logic "$p"
         done
@@ -406,7 +411,7 @@ EOF
                 mv "$tmp" "$CLIENTS_FILE"
                 
                 generate_subscription_file "$c" "$uuid" "$password" "$sub_hash" "$active_protos"
-                print_success "Client '$c' created. Subscription: https://${domain}/${sub_hash}"
+                print_success "Client '$c' created. Subscription: https://${domain}/assets/js/${sub_hash}.bin"
             fi
         done
         rebuild_config
@@ -414,9 +419,11 @@ EOF
     
     print_success "Installation complete!"
     echo ""
-    read -p "Do you want to add more protocols now? y/n: " add_now
-    if [[ "$add_now" == "y" ]]; then
-        add_protocol
+    if [[ "$UNATTENDED" != "true" ]]; then
+        read -p "Do you want to add more protocols now? y/n: " add_now
+        if [[ "$add_now" == "y" ]]; then
+            add_protocol
+        fi
     fi
     echo ""
 }
@@ -425,11 +432,8 @@ run_system_migration() {
     print_info "Running system migration and config optimization..."
     
     # Step 1: Create backup
-    local backup_dir="$INSTALL_DIR/backups"
-    mkdir -p "$backup_dir"
-    local backup_tar="$backup_dir/uncut_backup_$(date +%Y%m%d_%H%M%S).tar.gz"
-    print_info "Creating configuration backup at $backup_tar..."
-    tar -czf "$backup_tar" -C "$INSTALL_DIR" settings.json clients.json config.json 2>/dev/null || true
+    backup_core
+    install_backup_cron
     
     # Step 2: Initialize default settings / new protocol keys if missing
     init_settings
@@ -441,9 +445,6 @@ run_system_migration() {
             set_setting "domain" "$DOMAIN"
             if command -v install_acme_sh &>/dev/null; then
                 install_acme_sh
-            fi
-            if command -v reconfig_mtg_domain &>/dev/null; then
-                reconfig_mtg_domain
             fi
         fi
     fi
@@ -469,12 +470,12 @@ run_system_migration() {
     if [[ -n "$PROTOCOLS" ]]; then
         print_info "Updating system protocols: $PROTOCOLS..."
         if [[ "$PROTOCOLS" == "all" ]]; then
-            local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
+            local all_protos=("xhttp-stealth" "vless-ws" "vless-httpupgrade" "vless-grpc" "vless-reality" "tuic")
             for p in "${all_protos[@]}"; do
                 add_protocol_logic "$p"
             done
         elif [[ "$PROTOCOLS" == "default" ]]; then
-            local default_protos=("hysteria2" "vless-reality" "xhttp-reality")
+            local default_protos=("xhttp-stealth" "vless-ws" "vless-httpupgrade" "vless-grpc" "vless-reality" "tuic")
             for p in "${default_protos[@]}"; do
                 add_protocol_logic "$p"
             done
@@ -566,7 +567,7 @@ change_domain() {
     local current_domain=$(get_setting "domain")
     echo "Current domain: ${current_domain:-None}"
     echo ""
-    read -p "Enter new domain or subdomain (e.g. cdn4.pabogate.com): " new_domain
+    read -p "Enter new domain or subdomain (e.g. cdn.example.com): " new_domain
     
     if [[ -z "$new_domain" ]]; then
         print_error "Domain cannot be empty"
@@ -597,10 +598,10 @@ change_domain() {
     export DOMAIN="$new_domain"
     
     print_info "Issuing SSL certificate for $new_domain..."
-    install_acme_sh --force
+    install_acme_sh "$new_domain" --force
     
     print_info "Rebuilding Nginx CDN configuration..."
-    setup_nginx_cdn
+    setup_nginx_cdn "$new_domain"
     
     print_info "Rebuilding Sing-box configuration..."
     rebuild_config
@@ -845,16 +846,7 @@ restart_service() {
     print_info "Restarting Nginx service..."
     systemctl restart nginx >/dev/null 2>&1 || true
     
-    if systemctl is-active --quiet mtg 2>/dev/null || [[ -d "/opt/mtg" ]]; then
-        print_info "Restarting MTProto Proxy (mtg)..."
-        pkill -9 -f "/opt/mtg/mtg" >/dev/null 2>&1 || true
-        systemctl restart mtg >/dev/null 2>&1 || true
-    fi
     
-    if systemctl is-active --quiet uncut-noise 2>/dev/null; then
-        print_info "Restarting Traffic Noise Generator..."
-        systemctl restart uncut-noise >/dev/null 2>&1 || true
-    fi
     
     sleep 1
     
@@ -866,11 +858,6 @@ restart_service() {
     echo ""
     echo -e "Sing-box: $sb_ok"
     echo -e "Nginx: $nx_ok"
-    if [[ -d "/opt/mtg" ]]; then
-        local mt_ok="${RED}Failed${NC}"
-        systemctl is-active --quiet mtg && mt_ok="${GREEN}Running${NC}"
-        echo -e "MTProto (mtg): $mt_ok"
-    fi
     print_success "All system services restarted successfully"
     echo ""
 }
@@ -1004,16 +991,20 @@ change_singbox_version() {
     fi
     
     print_info "Stopping sing-box..."
-    systemctl stop sing-box
+    systemctl stop sing-box >/dev/null 2>&1 || true
     
     print_info "Downloading sing-box $target_version..."
     download_singbox "$target_version"
     
     print_info "Rebuilding config for compatibility..."
     rebuild_config
+
+    if [[ ! -f "$SERVICE_FILE" ]]; then
+        create_systemd_service
+    fi
     
     print_info "Restarting sing-box..."
-    systemctl restart sing-box
+    systemctl restart sing-box >/dev/null 2>&1 || true
     sleep 2
     
     if systemctl is-active --quiet sing-box; then

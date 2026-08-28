@@ -34,8 +34,20 @@ validate_domain() {
 check_domain_dns() {
     local domain=$1
     local server_ip=$(curl -s --connect-timeout 3 https://api.ipify.org 2>/dev/null || curl -s --connect-timeout 3 https://ifconfig.me 2>/dev/null)
-    local domain_ip=$(dig +short "$domain" 2>/dev/null | tail -n1)
     
+    local domain_ip=""
+    if command -v dig >/dev/null 2>&1; then
+        domain_ip=$(dig +short "$domain" 2>/dev/null | tail -n1)
+    fi
+
+    if [[ -z "$domain_ip" ]] && command -v getent >/dev/null 2>&1; then
+        domain_ip=$(getent hosts "$domain" 2>/dev/null | awk '{print $1}' | head -n1)
+    fi
+
+    if [[ -z "$domain_ip" ]] && command -v python3 >/dev/null 2>&1; then
+        domain_ip=$(python3 -c "import socket; print(socket.gethostbyname('$domain'))" 2>/dev/null)
+    fi
+
     if [[ -z "$server_ip" ]]; then
         print_warning "Could not determine server IP"
         return 0  # Allow to proceed
@@ -85,17 +97,34 @@ check_ports_available() {
     return 0
 }
 
-# Enable BBR
 enable_bbr() {
-    print_info "Enabling BBR..."
-    if ! grep -q "net.core.default_qdisc=fq" /etc/sysctl.conf; then
-        echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+    print_info "Enabling BBR and 1Gbps Network Optimizations..."
+    
+    local sysctl_conf="/etc/sysctl.d/99-uncut-network.conf"
+    cat > "$sysctl_conf" <<EOF
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.netdev_max_backlog = 10000
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_fastopen = 3
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+EOF
+    sysctl --system >/dev/null 2>&1 || sysctl -p "$sysctl_conf" >/dev/null 2>&1 || true
+
+    # Create 2GB swap if missing to prevent OOM
+    if [[ $(swapon --show | wc -l) -le 1 ]]; then
+        fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 >/dev/null 2>&1
+        chmod 600 /swapfile
+        mkswap /swapfile >/dev/null 2>&1
+        swapon /swapfile >/dev/null 2>&1
+        grep -q '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
     fi
-    if ! grep -q "net.ipv4.tcp_congestion_control=bbr" /etc/sysctl.conf; then
-        echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-    fi
-    sysctl -p >/dev/null 2>&1
-    print_success "BBR enabled"
+    print_success "BBR and network buffers optimized for 1Gbps"
 }
 
 # Configure SSH listening port (Supports Ubuntu 20.04, 22.04, 24.04, 26.04)
@@ -191,27 +220,20 @@ setup_firewall() {
     # Reset rules
     ufw --force reset > /dev/null 2>&1
     
-    # Allow SSH (critical!)
+    # Allow default base ports (SSH, HTTP ACME, HTTPS, QUIC/Hysteria2)
     ufw allow ${ssh_port}/tcp comment 'SSH' > /dev/null 2>&1
-    
-    # Allow proxy ports
     ufw allow 80/tcp comment 'HTTP/ACME' > /dev/null 2>&1
     ufw allow 443/tcp comment 'HTTPS/CDN' > /dev/null 2>&1
-    ufw allow 443/udp comment 'HTTP/3 QUIC' > /dev/null 2>&1
-    ufw allow 2083/tcp comment 'VLESS Reality' > /dev/null 2>&1
-    ufw allow 2053/tcp comment 'XHTTP' > /dev/null 2>&1
-    ufw allow 8443/tcp comment 'XHTTP Reality' > /dev/null 2>&1
-    ufw allow 8443/udp comment 'Hysteria2' > /dev/null 2>&1
-    ufw allow 8550/udp comment 'TUIC' > /dev/null 2>&1
-    ufw allow 4430/tcp comment 'MTProto Proxy' > /dev/null 2>&1
-    ufw allow 52143/tcp comment 'HTTP Proxy' > /dev/null 2>&1
-    ufw allow 52144/tcp comment 'SOCKS Proxy' > /dev/null 2>&1
+    ufw allow 443/udp comment 'TUIC' > /dev/null 2>&1
+    
+    # Sync dynamic active standalone ports if configured
+    sync_firewall_ports
     
     # Enable firewall
     ufw --force enable > /dev/null 2>&1
     
     print_success "Firewall configured"
-    local open_ports="${ssh_port}(SSH), 80, 443, 2053, 2083, 4430, 8443(TCP/UDP), 8550(UDP), 52143, 52144"
+    local open_ports="${ssh_port}(SSH), 80(HTTP), 443(TCP/UDP)"
     echo "Open ports: $open_ports"
     
     # Install and configure Fail2ban for SSH protection
@@ -286,26 +308,12 @@ sync_firewall_ports() {
     local active_protos=($(get_protocols))
     for proto in "${active_protos[@]}"; do
         case "$proto" in
-            "vless-reality") ufw allow 2083/tcp comment 'VLESS Reality' >/dev/null 2>&1 ;;
-            "xhttp") ufw allow 2053/tcp comment 'XHTTP' >/dev/null 2>&1 ;;
-            "xhttp-reality") ufw allow 8443/tcp comment 'XHTTP Reality' >/dev/null 2>&1 ;;
-            "hysteria2") ufw allow 8443/udp comment 'Hysteria2' >/dev/null 2>&1 ;;
-            "tuic") ufw allow 8550/udp comment 'TUIC' >/dev/null 2>&1 ;;
-            "http") ufw allow 52143/tcp comment 'HTTP Proxy' >/dev/null 2>&1 ;;
-            "socks") ufw allow 52144/tcp comment 'SOCKS Proxy' >/dev/null 2>&1 ;;
-            "shadowtls") ufw allow 8444/tcp comment 'ShadowTLS' >/dev/null 2>&1 ;;
-            "sudoku") ufw allow 8551/tcp comment 'Sudoku' >/dev/null 2>&1 ;;
-            "trusttunnel") ufw allow 8553/tcp comment 'TrustTunnel' >/dev/null 2>&1 ;;
-            "snell") ufw allow 8554/tcp comment 'Snell' >/dev/null 2>&1 ;;
+            "vless-reality") ufw allow 8443/tcp comment 'VLESS Reality' >/dev/null 2>&1 ;;
+            "tuic") ufw allow 443/udp comment 'TUIC' >/dev/null 2>&1 ;;
         esac
     done
-    
-    local mtg_port=$(get_setting "mtg_port")
-    if [[ -n "$mtg_port" ]]; then
-        ufw allow "${mtg_port}/tcp" comment 'MTProto' >/dev/null 2>&1
-    fi
-}
 
+}
 check_system_health() {
     echo ""
     echo "=== System Health & Diagnostics ==="
