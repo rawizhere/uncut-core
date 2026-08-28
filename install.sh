@@ -37,7 +37,11 @@ if [[ -n "$DOMAIN" && -n "$EMAIL" ]]; then
     export UNATTENDED=true
 fi
 
-echo -e "${GREEN}Installing Uncut Core...${NC}"
+# Wait/clear apt locks if held by unattended-upgrades on fresh boot
+if pgrep -f "unattended-upgr|dpkg|apt" >/dev/null 2>&1; then
+    echo "Waiting for background package updates to complete..."
+    timeout 60 bash -c 'while pgrep -f "unattended-upgr|dpkg|apt" >/dev/null 2>&1; do sleep 2; done' || true
+fi
 
 # Install core dependencies immediately before running any script logic
 echo "Installing required system dependencies (jq, curl, tar, openssl)..."
@@ -54,9 +58,16 @@ if command -v git &> /dev/null; then
         git remote set-url origin https://github.com/rawizhere/uncut-core.git
         git fetch --all >/dev/null 2>&1
         git reset --hard origin/main >/dev/null 2>&1
-    else
+    elif [[ -z "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]]; then
         echo "Cloning repository via Git..."
         git clone -q https://github.com/rawizhere/uncut-core.git "$INSTALL_DIR"
+    else
+        echo "Updating files via release tarball..."
+        tmp_tar=$(mktemp)
+        if curl -sL https://github.com/rawizhere/uncut-core/archive/refs/heads/main.tar.gz -o "$tmp_tar"; then
+            tar -xzf "$tmp_tar" -C "$INSTALL_DIR" --strip-components=1 --overwrite
+            rm -f "$tmp_tar"
+        fi
     fi
 else
     echo "Git not found, downloading release tarball..."
@@ -78,36 +89,6 @@ chmod +x "$INSTALL_DIR/modules/"*.sh
 
 # Symlink
 ln -sf "$INSTALL_DIR/raw" /usr/local/bin/raw
-
-# Setup Noise Generator Service
-echo "Setting up Noise Generator service..."
-cat > /etc/systemd/system/uncut-noise.service <<EOF
-[Unit]
-Description=Uncut Core Traffic Blending Noise Generator
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/bash $INSTALL_DIR/modules/noise.sh
-User=root
-EOF
-
-cat > /etc/systemd/system/uncut-noise.timer <<EOF
-[Unit]
-Description=Run Uncut Core Noise Generator periodically
-
-[Timer]
-OnBootSec=1m
-OnUnitActiveSec=5m
-RandomizedDelaySec=2m
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now uncut-noise.timer >/dev/null 2>&1 || true
 
 echo -e "${GREEN}Installation files updated!${NC}"
 

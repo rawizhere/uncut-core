@@ -5,7 +5,7 @@ generate_vless_ws_inbound() {
     local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "vless-ws")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
-    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f1)
+    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f2)
     local salted_path=$(get_salted_path "$primary_path_raw")
 
     cat <<EOF
@@ -31,7 +31,7 @@ generate_xhttp_stealth_inbound() {
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
     local mode=$(echo "$theme_data" | awk -F'|' '{print $3}' | cut -d':' -f2)
     
-    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f2)
+    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f1)
     local salted_path=$(get_salted_path "$primary_path_raw")
 
     cat <<EOF
@@ -50,6 +50,48 @@ generate_xhttp_stealth_inbound() {
     "sc_max_each_post_bytes": 1000000,
     "sc_max_buffered_posts": 30,
     "sc_stream_up_server_secs": "20-80"
+  }
+}
+EOF
+}
+
+generate_vless_httpupgrade_inbound() {
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "vless-httpupgrade")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local theme_data=$(get_theme_data)
+    local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
+    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f3)
+    local salted_path=$(get_salted_path "$primary_path_raw")
+
+    cat <<EOF
+{
+  "type": "vless",
+  "tag": "vless-httpupgrade",
+  "listen": "127.0.0.1",
+  "listen_port": 10004,
+  "users": $users,
+  "transport": {
+    "type": "httpupgrade",
+    "path": "$salted_path"
+  }
+}
+EOF
+}
+
+generate_vless_grpc_inbound() {
+    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "vless-grpc")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
+    local salt=$(get_setting "protocol_salt")
+    local service_name="EdgeContent_${salt}"
+
+    cat <<EOF
+{
+  "type": "vless",
+  "tag": "vless-grpc",
+  "listen": "127.0.0.1",
+  "listen_port": 10003,
+  "users": $users,
+  "transport": {
+    "type": "grpc",
+    "service_name": "$service_name"
   }
 }
 EOF
@@ -80,7 +122,7 @@ generate_vless_reality_inbound() {
   "type": "vless",
   "tag": "vless-reality",
   "listen": "0.0.0.0",
-  "listen_port": 2083,
+  "listen_port": 8443,
   "users": $users,
   "tls": {
     "enabled": true,
@@ -95,199 +137,6 @@ generate_vless_reality_inbound() {
       "short_id": ["$short_id"],
       "max_time_difference": "5m"
     }
-  }
-}
-EOF
-}
-
-generate_hysteria2_inbound() {
-    local domain=$(get_setting "domain")
-    local obfs_password=$(get_setting "hysteria_obfs_password")
-    
-    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "hysteria2")) | {password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
-    
-    cat <<EOF
-{
-  "type": "hysteria2",
-  "tag": "hysteria2",
-  "listen": "0.0.0.0",
-  "listen_port": 8443,
-  "users": $users,
-  "masquerade": "https://127.0.0.1:443",
-  "ignore_client_bandwidth": true,
-  "obfs": {
-    "type": "salamander",
-    "password": "$obfs_password"
-  },
-  "tls": {
-    "enabled": true,
-    "alpn": ["h3"],
-    "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
-  }
-}
-EOF
-}
-
-generate_xhttp_inbound() {
-    local domain=$(get_setting "domain")
-    
-    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "xhttp")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
-    
-    local padding_range="100-2500"
-    if [[ $(get_setting "traffic_shaping_level" "low") == "high" ]]; then
-        padding_range="500-4000"
-    fi
-
-    cat <<EOF
-{
-  "type": "vless",
-  "tag": "xhttp",
-  "listen": "0.0.0.0",
-  "listen_port": 2053,
-  "users": $users,
-  "transport": {
-    "type": "xhttp",
-    "path": "/",
-    "mode": "stream-up",
-    "x_padding_bytes": "$padding_range",
-    "no_sse_header": false,
-    "sc_max_each_post_bytes": 1000000,
-    "sc_max_buffered_posts": 30,
-    "sc_stream_up_server_secs": "20-80",
-    "congestion_controller": "bbr",
-    "cwnd": 32
-  },
-  "tls": {
-    "enabled": true,
-    "alpn": ["h3", "h2", "http/1.1"],
-    "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
-  }
-}
-EOF
-}
-
-generate_xhttp_reality_inbound() {
-    local sni=$(get_setting "sni" "dl.google.com")
-    local private_key=$(get_setting "reality_private_key")
-    local short_id=$(get_setting "reality_short_id")
-    
-    if [[ -z "$private_key" || -z "$short_id" ]]; then
-        if [[ -f "$INSTALL_DIR/sing-box" ]]; then
-            local keys_output=$("$INSTALL_DIR/sing-box" generate reality-keypair 2>/dev/null)
-            private_key=$(echo "$keys_output" | grep "PrivateKey:" | awk '{print $2}')
-            local public_key=$(echo "$keys_output" | grep "PublicKey:" | awk '{print $2}')
-            short_id=$(generate_short_id)
-            set_setting "reality_private_key" "$private_key"
-            set_setting "reality_public_key" "$public_key"
-            set_setting "reality_short_id" "$short_id"
-        fi
-    fi
-    
-    local handshake_server=$(get_setting "reality_handshake_server" "$sni")
-    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "xhttp-reality")) | {uuid: .uuid}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
-    
-    cat <<EOF
-{
-  "type": "vless",
-  "tag": "xhttp-reality",
-  "listen": "0.0.0.0",
-  "listen_port": 8443,
-  "users": $users,
-  "transport": {
-    "type": "xhttp",
-    "path": "/",
-    "mode": "stream-up",
-    "x_padding_bytes": "100-2500",
-    "no_sse_header": false,
-    "sc_max_each_post_bytes": 1000000,
-    "sc_max_buffered_posts": 30,
-    "sc_stream_up_server_secs": "20-80",
-    "congestion_controller": "bbr",
-    "cwnd": 32
-  },
-  "tls": {
-    "enabled": true,
-    "server_name": "$sni",
-    "reality": {
-      "enabled": true,
-      "handshake": {
-        "server": "$handshake_server",
-        "server_port": 443
-      },
-      "private_key": "$private_key",
-      "short_id": ["$short_id"],
-      "max_time_difference": "5m"
-    }
-  }
-}
-EOF
-}
-
-generate_sudoku_inbound() {
-    local sudoku_key=$(get_setting "sudoku_key")
-    if [[ -z "$sudoku_key" ]]; then
-        sudoku_key=$(openssl rand -hex 16)
-        set_setting "sudoku_key" "$sudoku_key"
-    fi
-
-    cat <<EOF
-{
-  "type": "sudoku",
-  "tag": "sudoku-in",
-  "listen": "0.0.0.0",
-  "listen_port": 8551,
-  "key": "$sudoku_key",
-  "aead_method": "chacha20-poly1305",
-  "table_type": "prefer_entropy"
-}
-EOF
-}
-
-generate_trusttunnel_inbound() {
-    local domain=$(get_setting "domain")
-    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "trusttunnel")) | {name: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
-
-    cat <<EOF
-{
-  "type": "trusttunnel",
-  "tag": "trusttunnel-in",
-  "listen": "0.0.0.0",
-  "listen_port": 8553,
-  "users": $users,
-  "congestion_controller": "bbr",
-  "cwnd": 32,
-  "tls": {
-    "enabled": true,
-    "alpn": ["h2", "h3"],
-    "certificate_path": "$INSTALL_DIR/certs/certificates/$domain.crt",
-    "key_path": "$INSTALL_DIR/certs/certificates/$domain.key"
-  }
-}
-EOF
-}
-
-generate_snell_inbound() {
-    local sni=$(get_setting "sni")
-    local snell_psk=$(get_setting "snell_psk")
-    if [[ -z "$snell_psk" ]]; then
-        snell_psk=$(openssl rand -hex 16)
-        set_setting "snell_psk" "$snell_psk"
-    fi
-
-    cat <<EOF
-{
-  "type": "snell",
-  "tag": "snell-in",
-  "listen": "0.0.0.0",
-  "listen_port": 8554,
-  "psk": "$snell_psk",
-  "version": 4,
-  "network": ["tcp", "udp"],
-  "obfs": {
-    "mode": "tls",
-    "host": "$sni"
   }
 }
 EOF
@@ -295,16 +144,16 @@ EOF
 
 generate_tuic_inbound() {
     local domain=$(get_setting "domain")
-    
+
     # For TUIC we use uuid as uuid and password as password
     local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "tuic")) | {uuid: .uuid, password: (.password // .uuid), name: .name}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
-    
+
     cat <<EOF
 {
   "type": "tuic",
   "tag": "tuic",
   "listen": "0.0.0.0",
-  "listen_port": 8550,
+  "listen_port": 443,
   "users": $users,
   "congestion_control": "bbr",
   "auth_timeout": "3s",
@@ -320,48 +169,10 @@ generate_tuic_inbound() {
 EOF
 }
 
-generate_http_inbound() {
-    # For HTTP we use name as username and password as password
-    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "http")) | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
-    
-    cat <<EOF
-{
-  "type": "http",
-  "tag": "http",
-  "listen": "0.0.0.0",
-  "listen_port": 52143,
-  "users": $users
-}
-EOF
-}
-
-generate_socks_inbound() {
-    # For SOCKS we use name as username and password as password
-    local users=$(jq -c '[.[] | select(.protocols == null or .protocols == [] or (.protocols[]? == "socks")) | {username: .name, password: (.password // .uuid)}]' "$CLIENTS_FILE" 2>/dev/null || echo "[]")
-    
-    cat <<EOF
-{
-  "type": "socks",
-  "tag": "socks",
-  "listen": "0.0.0.0",
-  "listen_port": 52144,
-  "users": $users
-}
-EOF
-}
-
 add_protocol_logic() {
     local protocol=$1
-    local needs_reality=false
-    local needs_hysteria=false
-    local needs_tls=false
 
-    [[ "$protocol" == "vless-reality" || "$protocol" == "xhttp-reality" ]] && needs_reality=true
-    [[ "$protocol" == "hysteria2" ]] && needs_hysteria=true
-    [[ "$protocol" == "hysteria2" || "$protocol" == "xhttp" || "$protocol" == "tuic" || "$protocol" == "trusttunnel" ]] && needs_tls=true
-
-    # Check and generate necessary data
-    if [[ "$needs_reality" == true ]]; then
+    if [[ "$protocol" == "vless-reality" ]]; then
         # Always generate new Reality keys
         print_info "Generating Reality keys..."
         local keys_output=$("$INSTALL_DIR/sing-box" generate reality-keypair)
@@ -369,64 +180,39 @@ add_protocol_logic() {
         local public_key=$(echo "$keys_output" | grep "PublicKey:" | awk '{print $2}')
         set_setting "reality_private_key" "$private_key"
         set_setting "reality_public_key" "$public_key"
-        
+
         # Always generate new short_id
         local short_id=$(generate_short_id)
         set_setting "reality_short_id" "$short_id"
     fi
-    
-    if [[ "$needs_hysteria" == true ]]; then
-        local obfs_password=$(generate_obfs_password)
-        set_setting "hysteria_obfs_password" "$obfs_password"
-    fi
 
-    if [[ "$protocol" == "sudoku" ]]; then
-        if [[ -z "$(get_setting "sudoku_key")" ]]; then
-            set_setting "sudoku_key" "$(openssl rand -hex 16)"
-        fi
-    fi
-
-    if [[ "$protocol" == "snell" ]]; then
-        if [[ -z "$(get_setting "snell_psk")" ]]; then
-            set_setting "snell_psk" "$(openssl rand -hex 16)"
-        fi
-    fi
-    
     add_protocol_to_settings "$protocol"
 }
-
 add_protocol() {
     echo ""
     echo "=== Add Protocol ==="
     echo ""
-    
+
     echo "Select protocol:"
-    echo "1) VLESS + Reality      (TCP :2083)"
-    echo "2) Hysteria2            (UDP :8443)"
-    echo "3) XHTTP                (TCP :2053)"
-    echo "4) XHTTP + Reality      (TCP :8443)"
-    echo "5) TUIC v5              (UDP :8550)"
-    echo "6) VLESS + WS (Nginx)   (TCP :443)"
-    echo "7) XHTTP Stealth (Nginx)(TCP :443)"
-    echo "8) HTTP                 (TCP :52143)"
-    echo "9) SOCKS5               (TCP :52144)"
-    echo "10) ShadowTLS v3        (TCP :8444)"
-    echo "11) Sudoku              (TCP :8551)"
-    echo "12) TrustTunnel         (TCP :8553)"
-    echo "13) Snell v4            (TCP :8554)"
-    echo "14) Create all protocols"
+    echo "1) XHTTP Stealth (Nginx)  (TCP :443)"
+    echo "2) VLESS + WS (Nginx)     (TCP :443)"
+    echo "3) VLESS + HTTPUpgrade    (TCP :443)"
+    echo "4) VLESS + gRPC (Nginx)   (TCP :443)"
+    echo "5) TUIC v5               (UDP :443)"
+    echo "6) VLESS + Reality       (TCP :8443)"
+    echo "7) Create all protocols"
     echo "0) Back"
     echo ""
-    
+
     read -p "Your choice: " choice
-    
+
     if [[ "$choice" == "0" ]]; then
         return
     fi
 
-    if [[ "$choice" == "14" ]]; then
+    if [[ "$choice" == "7" ]]; then
         print_info "Adding all protocols..."
-        local all_protos=("vless-reality" "hysteria2" "xhttp" "xhttp-reality" "tuic" "vless-ws" "xhttp-stealth" "http" "socks" "shadowtls" "sudoku" "trusttunnel" "snell")
+        local all_protos=("xhttp-stealth" "vless-ws" "vless-httpupgrade" "vless-grpc" "tuic" "vless-reality")
         for p in "${all_protos[@]}"; do
             if ! protocol_exists "$p"; then
                 add_protocol_logic "$p"
@@ -440,32 +226,25 @@ add_protocol() {
 
     local protocol=""
     case "$choice" in
-        1) protocol="vless-reality" ;;
-        2) protocol="hysteria2" ;;
-        3) protocol="xhttp" ;;
-        4) protocol="xhttp-reality" ;;
+        1) protocol="xhttp-stealth" ;;
+        2) protocol="vless-ws" ;;
+        3) protocol="vless-httpupgrade" ;;
+        4) protocol="vless-grpc" ;;
         5) protocol="tuic" ;;
-        6) protocol="vless-ws" ;;
-        7) protocol="xhttp-stealth" ;;
-        8) protocol="http" ;;
-        9) protocol="socks" ;;
-        10) protocol="shadowtls" ;;
-        11) protocol="sudoku" ;;
-        12) protocol="trusttunnel" ;;
-        13) protocol="snell" ;;
+        6) protocol="vless-reality" ;;
         *)
             print_error "Invalid choice"
             return
             ;;
     esac
-    
+
     if protocol_exists "$protocol"; then
         print_error "Protocol is already added"
         return
     fi
-    
+
     add_protocol_logic "$protocol"
-    
+
     local domain=$(get_setting "domain")
     if [[ -n "$domain" ]]; then
         setup_nginx_cdn "$domain"
@@ -473,12 +252,12 @@ add_protocol() {
 
     # Update config.json
     rebuild_config
-    
+
     # Restart service
     print_info "Restarting service..."
     systemctl restart sing-box
     sleep 2
-    
+
     if systemctl is-active --quiet sing-box; then
         print_success "Protocol '$protocol' added"
     else
@@ -486,7 +265,6 @@ add_protocol() {
     fi
     echo ""
 }
-
 remove_protocol() {
     echo ""
     echo "=== Remove Protocol ==="
@@ -567,9 +345,9 @@ list_protocols() {
     echo ""
     echo "=== Protocol List ==="
     echo ""
-    
+
     local protocols=($(get_protocols))
-    
+
     if [[ ${#protocols[@]} -eq 0 ]]; then
         print_warning "Protocols not configured"
     else
@@ -578,50 +356,28 @@ list_protocols() {
         for protocol in "${protocols[@]}"; do
             case "$protocol" in
                 "vless-reality")
-                    echo "  • VLESS + Reality (:2083)"
-                    ;;
-                "hysteria2")
-                    echo "  • Hysteria2 (:8443 UDP)"
-                    ;;
-                "xhttp")
-                    echo "  • XHTTP (:2053)"
-                    ;;
-                "xhttp-reality")
-                    echo "  • XHTTP + Reality (:8443)"
+                    echo "  • VLESS + Reality (:8443)"
                     ;;
                 "tuic")
-                    echo "  • TUIC v5 (:8550 UDP)"
+                    echo "  • TUIC v5 (:443 UDP)"
                     ;;
                 "vless-ws")
                     echo "  • VLESS + WebSocket (:443 via Nginx)"
                     ;;
                 "xhttp-stealth")
-                    echo "  • XHTTP Stealth (Nginx) (:443)"
+                    echo "  • XHTTP Stealth (:443 via Nginx)"
                     ;;
-                "http")
-                    echo "  • HTTP (:52143)"
+                "vless-httpupgrade")
+                    echo "  • VLESS + HTTPUpgrade (:443 via Nginx)"
                     ;;
-                "socks")
-                    echo "  • SOCKS5 (:52144)"
-                    ;;
-                "shadowtls")
-                    echo "  • ShadowTLS v3 (:8444)"
-                    ;;
-                "sudoku")
-                    echo "  • Sudoku (:8551)"
-                    ;;
-                "trusttunnel")
-                    echo "  • TrustTunnel (:8553)"
-                    ;;
-                "snell")
-                    echo "  • Snell v4 (:8554)"
+                "vless-grpc")
+                    echo "  • VLESS + gRPC (:443 via Nginx)"
                     ;;
             esac
         done
     fi
     echo ""
 }
-
 change_sni() {
     echo ""
     echo "=== Change SNI ==="

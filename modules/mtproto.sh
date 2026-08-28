@@ -1,266 +1,238 @@
-#!/bin/bash
-
-export MTG_INSTALL_DIR="/opt/mtg"
-export MTG_SERVICE_FILE="/etc/systemd/system/mtg.service"
-
-install_mtg() {
-    print_info "Detecting architecture for mtg..."
-    local arch=$(uname -m)
-    local mtg_arch=""
-    case $arch in
-        x86_64) mtg_arch="amd64" ;;
-        aarch64) mtg_arch="arm64" ;;
-        *)
-            print_error "Unsupported architecture: $arch"
-            return
-            ;;
-    esac
-
-    print_info "Fetching latest mtg version..."
-    local release_info=$(curl -s https://api.github.com/repos/9seconds/mtg/releases/latest)
-    local version=$(echo "$release_info" | jq -r .tag_name)
+# Install MTProxy and tproxy-server
+install_telegram_proxies() {
+    print_info "Checking Telegram Proxy components..."
     
-    if [[ -z "$version" ]] || [[ "$version" == "null" ]]; then
-        print_error "Failed to fetch mtg version"
-        return
+    # Install MTProxy backend if missing
+    if [[ ! -x "/opt/MTProxy/objs/bin/mtproto-proxy" || ! -f "/etc/mtproxy/proxy-secret" ]]; then
+        print_info "Building official Telegram MTProxy backend..."
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y -qq --no-install-recommends ca-certificates curl build-essential libssl-dev util-linux zlib1g-dev >/dev/null 2>&1 || true
+        
+        if ! id mtproxy >/dev/null 2>&1; then
+            useradd --system --home /nonexistent --shell /usr/sbin/nologin mtproxy >/dev/null 2>&1 || true
+        fi
+        
+        local tmp_build=$(mktemp -d /tmp/mtproxy-build.XXXXXX)
+        local commit="f36d8af769ffaeac36978d38c2c0f6d1104c2137"
+        curl -sSL "https://github.com/TelegramMessenger/MTProxy/archive/${commit}.tar.gz" -o "$tmp_build/mtproxy.tar.gz"
+        mkdir -p "$tmp_build/MTProxy"
+        tar -C "$tmp_build/MTProxy" --strip-components=1 -xzf "$tmp_build/mtproxy.tar.gz" 2>/dev/null || true
+        make -C "$tmp_build/MTProxy" -j"$(nproc)" >/dev/null 2>&1 || true
+        
+        if [[ -x "$tmp_build/MTProxy/objs/bin/mtproto-proxy" ]]; then
+            mkdir -p /opt/MTProxy/objs/bin
+            cp "$tmp_build/MTProxy/objs/bin/mtproto-proxy" /opt/MTProxy/objs/bin/mtproto-proxy
+            chmod +x /opt/MTProxy/objs/bin/mtproto-proxy
+            rm -rf "$tmp_build"
+            print_success "MTProxy backend compiled successfully"
+        fi
+        
+        mkdir -p /etc/mtproxy
+        curl -sSL "https://core.telegram.org/getProxySecret" -o /etc/mtproxy/proxy-secret
+        curl -sSL "https://core.telegram.org/getProxyConfig" -o /etc/mtproxy/proxy-multi.conf
+        chmod 0640 /etc/mtproxy/proxy-secret /etc/mtproxy/proxy-multi.conf
     fi
-    print_success "Version: $version"
 
-    local file_name="mtg-${version#v}-linux-${mtg_arch}"
-    local url="https://github.com/9seconds/mtg/releases/download/${version}/${file_name}.tar.gz"
-    
-    print_info "Downloading mtg..."
-    local tmp_dir=$(mktemp -d)
-    
-    if ! curl -sL "$url" -o "$tmp_dir/mtg.tar.gz"; then
-        print_error "Failed to download mtg"
-        rm -rf "$tmp_dir"
-        return
+    # Install tproxy-server if missing
+    if [[ ! -x "$INSTALL_DIR/tproxy-server" ]]; then
+        print_info "Setting up Telegram WEB Proxy relay..."
+        if ! command -v go >/dev/null 2>&1; then
+            apt-get install -y -qq golang-go >/dev/null 2>&1 || true
+        fi
+        
+        local tmp_tproxy=$(mktemp -d /tmp/tproxy-build.XXXXXX)
+        if git clone --depth 1 https://github.com/telegramdesktop/tproxy-server.git "$tmp_tproxy" >/dev/null 2>&1; then
+            (cd "$tmp_tproxy" && go build -o "$INSTALL_DIR/tproxy-server" ./cmd/tproxy-server >/dev/null 2>&1)
+            chmod +x "$INSTALL_DIR/tproxy-server" 2>/dev/null || true
+            rm -rf "$tmp_tproxy"
+            print_success "Telegram WEB Proxy relay installed successfully"
+        fi
     fi
-    
-    print_info "Extracting..."
-    tar -xzf "$tmp_dir/mtg.tar.gz" -C "$tmp_dir" 2>/dev/null || {
-        print_error "Extraction error"
-        rm -rf "$tmp_dir"
-        return
-    }
-    
-    mkdir -p "$MTG_INSTALL_DIR"
-    mv "$tmp_dir/$file_name/mtg" "$MTG_INSTALL_DIR/mtg"
-    chmod +x "$MTG_INSTALL_DIR/mtg"
-    rm -rf "$tmp_dir"
-    
+}
+
+# Generate Telegram MTProto secret
+generate_mtproto_secret() {
     local domain=$(get_setting "domain")
-    local cert_file="$INSTALL_DIR/certs/certificates/$domain.crt"
-    local fallback_target="127.0.0.1:443"
-    
-    if [[ -z "$domain" ]] || ! is_cert_valid "$cert_file"; then
-        print_warning "SSL certificate for domain is missing or self-signed. Using aws.amazon.com fallback for MTProto TLS."
-        domain="aws.amazon.com"
-        fallback_target="aws.amazon.com:443"
-    fi
-    
-    print_info "Generating TLS secret for $domain..."
-    local secret=$("$MTG_INSTALL_DIR/mtg" generate-secret "$domain" 2>/dev/null)
-    
-    if [[ -z "$secret" ]]; then
-        print_error "Failed to generate mtg secret"
-        return
-    fi
-    
-    print_info "Generating config for mtg..."
-    cat > "$MTG_INSTALL_DIR/config.toml" <<EOF
-secret = "$secret"
-bind-to = "0.0.0.0:4430"
-fallback = "$fallback_target"
-prefer-ip-version = "ipv4"
-EOF
+    local raw_hex=$(openssl rand -hex 16)
+    local hex_domain=$(python3 -c "import sys; print('$domain'.encode().hex(), end='')" 2>/dev/null || xxd -p <<< "$domain" | tr -d '\n')
+    echo "ee${raw_hex}${hex_domain}"
+}
 
-    set_setting "mtg_secret" "$secret"
-    set_setting "mtg_port" "4430"
+setup_mtproto_service() {
+    local secret=$1
+    local domain=$(get_setting "domain")
     
-    print_info "Creating mtg systemd service..."
-    cat > "$MTG_SERVICE_FILE" <<EOF
+    # Extract clean 32-char hex secret
+    local clean_hex_secret="${secret#ee}"
+    clean_hex_secret="${clean_hex_secret:0:32}"
+    if [[ -z "$clean_hex_secret" || ${#clean_hex_secret} -lt 32 ]]; then
+        clean_hex_secret=$(openssl rand -hex 16)
+    fi
+
+    # Configure MTProxy backend
+    mkdir -p /etc/mtproxy
+    echo "MTPROXY_SECRET=$clean_hex_secret" > /etc/mtproxy/mtproxy.env
+    echo "MTPROXY_WORKERS=1" >> /etc/mtproxy/mtproxy.env
+    echo "MTPROXY_MAX_CONNECTIONS=4096" >> /etc/mtproxy/mtproxy.env
+
+    cat > /etc/systemd/system/mtproxy.service <<EOF
 [Unit]
-Description=mtg - MTProto Proxy
-Documentation=https://github.com/9seconds/mtg
+Description=Official Telegram MTProto Proxy Backend
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=$MTG_INSTALL_DIR/mtg run $MTG_INSTALL_DIR/config.toml
-Restart=always
+EnvironmentFile=/etc/mtproxy/mtproxy.env
+ExecStart=/opt/MTProxy/objs/bin/mtproto-proxy -u nobody -p 8888 -H 2398 -S \${MTPROXY_SECRET} --aes-pwd /etc/mtproxy/proxy-secret /etc/mtproxy/proxy-multi.conf -M \${MTPROXY_WORKERS} -C \${MTPROXY_MAX_CONNECTIONS}
+Restart=on-failure
 RestartSec=3
-DynamicUser=true
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=mtg
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # Open firewall port
-    if command -v ufw >/dev/null 2>&1; then
-        print_info "Opening port 4430 in UFW..."
-        ufw allow 4430/tcp >/dev/null 2>&1
+    # Configure tproxy-server
+    mkdir -p "$INSTALL_DIR/tproxy"
+    mkdir -p /srv/tproxy-site
+    if [[ ! -f /srv/tproxy-site/index.html ]]; then
+        echo '<!DOCTYPE html><html><head><title>CloudFront Edge Origin</title></head><body><h3>Origin Server Active</h3></body></html>' > /srv/tproxy-site/index.html
     fi
+
+    # Create profiles.json
+    cat > "$INSTALL_DIR/tproxy/profiles.json" <<EOF
+{
+  "profiles": [
+    {
+      "name": "default",
+      "secret": "$clean_hex_secret",
+      "backend": "127.0.0.1:2398",
+      "carrier_mode": "https"
+    }
+  ]
+}
+EOF
+    chmod 0600 "$INSTALL_DIR/tproxy/profiles.json"
+
+    # Create config.json
+    cat > "$INSTALL_DIR/tproxy/config.json" <<EOF
+{
+  "public_hostname": "$domain",
+  "listen": "127.0.0.1:8080",
+  "admin_listen": "127.0.0.1:8081",
+  "public_dir": "/srv/tproxy-site",
+  "profiles_file": "$INSTALL_DIR/tproxy/profiles.json",
+  "enable_pprof": false
+}
+EOF
+
+    cat > /etc/systemd/system/tproxy-server.service <<EOF
+[Unit]
+Description=Telegram WEB Proxy Service (tproxy-server)
+After=network.target mtproxy.service
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_DIR/tproxy-server -config $INSTALL_DIR/tproxy/config.json
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
     systemctl daemon-reload
-    systemctl enable mtg >/dev/null 2>&1
-    systemctl start mtg
-    
-    if systemctl is-active --quiet mtg; then
-        print_success "MTProto proxy installed and started successfully!"
-        show_mtg_status_and_links
-    else
-        print_error "mtg service failed to start. Check 'journalctl -u mtg'."
-    fi
+    systemctl enable mtproxy tproxy-server >/dev/null 2>&1
+    systemctl restart mtproxy >/dev/null 2>&1
+    systemctl restart tproxy-server >/dev/null 2>&1
 }
 
-reinstall_mtg() {
-    print_info "Reinstalling MTProto proxy..."
-    uninstall_mtg
-    install_mtg
-}
-
-uninstall_mtg() {
-    print_info "Stopping and disabling mtg service..."
-    pkill -9 -f "$MTG_INSTALL_DIR/mtg" >/dev/null 2>&1 || true
-    timeout 5 systemctl stop mtg >/dev/null 2>&1 || true
-    systemctl disable mtg >/dev/null 2>&1 || true
-    
-    print_info "Removing files..."
-    rm -f "$MTG_SERVICE_FILE"
-    rm -rf "$MTG_INSTALL_DIR"
-    
-    # Close firewall port
-    if command -v ufw >/dev/null 2>&1; then
-        print_info "Closing port 4430 in UFW..."
-        ufw delete allow 4430/tcp >/dev/null 2>&1
-    fi
-    
-    # Remove from settings
-    local tmp=$(mktemp)
-    jq 'del(.mtg_secret, .mtg_port)' "$SETTINGS_FILE" > "$tmp" 2>/dev/null && mv "$tmp" "$SETTINGS_FILE"
-    
-    systemctl daemon-reload
-    print_success "MTProto proxy uninstalled"
-}
-
-show_mtg_status_and_links() {
-    if ! [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
-        print_error "MTProto Proxy is not installed"
-        return
-    fi
-    
-    if systemctl is-active --quiet mtg; then
-        print_success "MTProto Proxy (mtg): active"
-    else
-        print_error "MTProto Proxy (mtg): inactive"
-    fi
-    
-    local secret=$(get_setting "mtg_secret")
-    local port=$(get_setting "mtg_port" "4430")
+get_mtproto_link() {
     local domain=$(get_setting "domain")
-    local server_ip=$(curl -s --connect-timeout 2 https://api.ipify.org 2>/dev/null || curl -s --connect-timeout 2 https://ifconfig.me 2>/dev/null)
-    
-    if [[ -n "$secret" && -n "$port" ]]; then
-        echo ""
-        echo "=== MTProto Proxy Links ==="
-        if [[ -n "$domain" ]]; then
-            echo "Domain link:"
-            echo "tg://proxy?server=${domain}&port=${port}&secret=${secret}"
-            echo ""
-        fi
-        if [[ -n "$server_ip" ]]; then
-            echo "IP link:"
-            echo "tg://proxy?server=${server_ip}&port=${port}&secret=${secret}"
-            echo ""
-        fi
-        echo "==========================="
-        echo ""
+    local secret=$(get_setting "mtproto_secret")
+    local clean_hex="${secret#ee}"
+    clean_hex="${clean_hex:0:32}"
+    if [[ -n "$domain" && -n "$secret" ]]; then
+        echo "tg://proxy?server=${domain}&port=443&secret=${secret}"
     fi
+}
+
+get_web_proxy_secret() {
+    local secret=$(get_setting "mtproto_secret")
+    local clean_hex="${secret#ee}"
+    clean_hex="${clean_hex:0:32}"
+    echo "$clean_hex"
 }
 
 mtproto_menu() {
-    while true; do
+    echo ""
+    echo "=== MTProto Proxy (Telegram 1-Click) ==="
+    echo ""
+    
+    local enabled=$(get_setting "mtproto_enabled" "false")
+    local secret=$(get_setting "mtproto_secret")
+    local domain=$(get_setting "domain")
+    
+    if [[ "$enabled" == "true" ]]; then
+        echo -e "Status: ${GREEN}Enabled (Nginx :443 Hub)${NC}"
+        echo "1-Click Telegram Link (MTPROTO):"
+        echo -e "${YELLOW}$(get_mtproto_link)${NC}"
         echo ""
-        echo "=== MTProto Proxy Management ==="
+        echo "Telegram WEB Proxy Settings (for Edit proxy -> WEB):"
+        echo "  Web proxy hostname: ${YELLOW}${domain}${NC}"
+        echo "  Secret:             ${YELLOW}$(get_web_proxy_secret)${NC}"
         echo ""
-        
-        if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
-            echo "1) Show Status & Link"
-            echo "2) Reinstall MTProto Proxy"
-            echo "3) Uninstall MTProto Proxy"
-        else
-            echo "1) Install MTProto Proxy"
+        if command -v qrencode >/dev/null 2>&1; then
+            qrencode -t ANSIUTF8 "$(get_mtproto_link)" 2>/dev/null || true
         fi
-        
+        echo ""
+        echo "1) Disable Telegram Proxies"
+        echo "2) Rotate Secret"
         echo "0) Back"
         echo ""
-        
         read -p "Your choice: " choice
-        
         case "$choice" in
             1)
-                if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
-                    show_mtg_status_and_links
-                else
-                    install_mtg
-                fi
+                systemctl stop mtproxy tproxy-server >/dev/null 2>&1 || true
+                systemctl disable mtproxy tproxy-server >/dev/null 2>&1 || true
+                set_setting "mtproto_enabled" "false"
+                # Re-apply Nginx config
+                setup_nginx_cdn "$domain"
+                print_success "MTProto disabled"
                 ;;
             2)
-                if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
-                    reinstall_mtg
-                else
-                    print_error "Invalid choice"
-                fi
-                ;;
-            3)
-                if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
-                    read -p "Are you sure you want to uninstall MTProto proxy? y/n: " confirm
-                    if [[ "$confirm" == "y" ]]; then
-                        uninstall_mtg
-                    fi
-                else
-                    print_error "Invalid choice"
-                fi
+                local new_secret=$(generate_mtproto_secret)
+                set_setting "mtproto_secret" "$new_secret"
+                setup_mtproto_service "$new_secret"
+                print_success "Secret rotated"
+                echo -e "New Link: ${YELLOW}$(get_mtproto_link)${NC}"
                 ;;
             0) return ;;
-            *) print_error "Invalid choice" ;;
         esac
-        
+    else
+        echo -e "Status: ${RED}Disabled${NC}"
         echo ""
-        read -p "Press Enter to continue..."
-    done
-}
-
-reconfig_mtg_domain() {
-    if [[ -f "$MTG_INSTALL_DIR/mtg" ]]; then
-        local domain=$(get_setting "domain")
-        local cert_file="$INSTALL_DIR/certs/certificates/$domain.crt"
-        local fallback_target="127.0.0.1:443"
-        
-        if [[ -z "$domain" ]] || ! is_cert_valid "$cert_file"; then
-            domain="aws.amazon.com"
-            fallback_target="aws.amazon.com:443"
-        fi
-
-        print_info "Syncing MTProto secret with domain: $domain..."
-        local new_secret=$("$MTG_INSTALL_DIR/mtg" generate-secret "$domain" 2>/dev/null)
-        if [[ -n "$new_secret" ]]; then
-            cat > "$MTG_INSTALL_DIR/config.toml" <<EOF
-secret = "$new_secret"
-bind-to = "0.0.0.0:4430"
-fallback = "$fallback_target"
-prefer-ip-version = "ipv4"
-EOF
-            set_setting "mtg_secret" "$new_secret"
-            pkill -9 -f "$MTG_INSTALL_DIR/mtg" >/dev/null 2>&1 || true
-            systemctl restart mtg >/dev/null 2>&1 || true
-            print_success "MTProto domain secret updated"
+        echo "Enable MTProto Telegram Proxy (routed via Nginx :443)?"
+        echo "1) Enable MTProto"
+        echo "0) Back"
+        echo ""
+        read -p "Your choice: " choice
+        if [[ "$choice" == "1" ]]; then
+            install_telegram_proxies || return 1
+            if [[ -z "$secret" ]]; then
+                secret=$(generate_mtproto_secret)
+                set_setting "mtproto_secret" "$secret"
+            fi
+            set_setting "mtproto_enabled" "true"
+            setup_mtproto_service "$secret"
+            
+            # Re-apply Nginx CDN config to add location for MTProto / tg-ws if needed
+            setup_nginx_cdn "$domain"
+            
+            print_success "Telegram Web Proxy & MTProto enabled and running behind Nginx :443"
+            echo -e "Telegram Link: ${YELLOW}$(get_mtproto_link)${NC}"
         fi
     fi
 }

@@ -37,12 +37,27 @@ is_cert_valid() {
 
 install_acme_sh() {
     local force_issue="false"
-    [[ "$1" == "--force" ]] && force_issue="true"
+    local domain=""
     
-    local email=$(get_setting "email")
-    local domain=$(get_setting "domain")
+    for arg in "$@"; do
+        if [[ "$arg" == "--force" ]]; then
+            force_issue="true"
+        elif [[ "$arg" != -* && -z "$domain" ]]; then
+            domain="$arg"
+        fi
+    done
     
     if [[ -z "$domain" ]]; then
+        domain=$(get_setting "domain")
+    fi
+    
+    local email=$(get_setting "email")
+    if [[ -z "$email" || "$email" == "null" ]]; then
+        email="admin@${domain}"
+        set_setting "email" "$email"
+    fi
+    
+    if [[ -z "$domain" || "$domain" == "null" ]]; then
         print_error "Domain not found in settings"
         return 1
     fi
@@ -58,11 +73,19 @@ install_acme_sh() {
         return
     fi
 
-    # Remove invalid/self-signed cert if present
-    if ! is_cert_valid "$cert_crt"; then
-        rm -f "$cert_crt" "$cert_key"
+    # Ensure a temporary fallback certificate exists so Nginx can boot port 80 for ACME challenge
+    if [[ ! -f "$cert_crt" || ! -f "$cert_key" ]]; then
+        print_info "Generating temporary SSL certificate for Nginx startup..."
+        openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+            -keyout "$cert_key" -out "$cert_crt" \
+            -subj "/CN=$domain" >/dev/null 2>&1 || true
+        chmod 644 "$cert_crt" 2>/dev/null || true
+        chmod 600 "$cert_key" 2>/dev/null || true
     fi
-    
+
+    # Ensure Nginx is running to serve /.well-known/acme-challenge/
+    systemctl restart nginx >/dev/null 2>&1 || true
+
     print_info "Installing acme.sh..."
     
     if [[ ! -d "/root/.acme.sh" ]]; then
@@ -70,6 +93,13 @@ install_acme_sh() {
             print_error "Failed to install acme.sh"
         fi
     fi
+    
+    if [[ -f "/root/.acme.sh/account.conf" && -n "$email" ]]; then
+        sed -i "s/ACCOUNT_EMAIL=.*/ACCOUNT_EMAIL='$email'/g" /root/.acme.sh/account.conf
+    fi
+
+    # Register / update account email with acme.sh
+    /root/.acme.sh/acme.sh --register-account -m "$email" --server letsencrypt >/dev/null 2>&1 || true
     
     # Ensure acme.sh is using Let's Encrypt
     /root/.acme.sh/acme.sh --set-default-ca --server letsencrypt >/dev/null 2>&1

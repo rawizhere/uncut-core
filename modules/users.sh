@@ -11,8 +11,18 @@ generate_vless_reality_link() {
     local short_id=$(get_setting "reality_short_id")
     
     local dpi_params=$(get_dpi_link_params)
-    echo "vless://${uuid}@${domain}:2083?type=tcp&encryption=none&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&flow=xtls-rprx-vision${dpi_params}#${name}-vless-reality-${country}"
+    echo "vless://${uuid}@${domain}:8443?type=tcp&encryption=none&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&flow=xtls-rprx-vision${dpi_params}#${name}-vless-reality-${country}"
 }
+generate_tuic_link() {
+    local name=$1
+    local uuid=$2
+    local password=$3
+    local domain=$(get_setting "domain")
+    local country=$(get_setting "country")
+
+    echo "tuic://${uuid}:${password}@${domain}:443?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=0#${name}-tuic-${country}"
+}
+
 generate_vless_ws_link() {
     local name=$1
     local uuid=$2
@@ -21,9 +31,9 @@ generate_vless_ws_link() {
     
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
-    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f1)
+    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f2)
     if [[ -z "$primary_path_raw" || "$primary_path_raw" == "null" ]]; then
-        primary_path_raw="/chat"
+        primary_path_raw="/assets/css"
     fi
     local salted_path=$(get_salted_path "$primary_path_raw")
     local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
@@ -40,9 +50,9 @@ generate_xhttp_stealth_link() {
     
     local theme_data=$(get_theme_data)
     local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
-    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f2)
+    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f1)
     if [[ -z "$primary_path_raw" || "$primary_path_raw" == "null" ]]; then
-        primary_path_raw="/chat"
+        primary_path_raw="/assets/js"
     fi
     local salted_path=$(get_salted_path "$primary_path_raw")
     local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
@@ -51,93 +61,35 @@ generate_xhttp_stealth_link() {
     echo "vless://${uuid}@${domain}:443?type=xhttp&security=tls&path=${encoded_path}&encryption=none&mode=stream-up&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-stealth-${country}"
 }
 
-generate_hysteria2_link() {
-    local name=$1
-    local password=$2
-    local domain=$(get_setting "domain")
-    local country=$(get_setting "country")
-    local obfs_password=$(get_setting "hysteria_obfs_password")
-    
-    local dpi_params=$(get_dpi_link_params)
-    echo "hysteria2://${password}@${domain}:8443?obfs=salamander&obfs-password=${obfs_password}&sni=${domain}${dpi_params}#${name}-hysteria2-${country}"
-}
-
-generate_xhttp_link() {
+generate_vless_httpupgrade_link() {
     local name=$1
     local uuid=$2
     local domain=$(get_setting "domain")
     local country=$(get_setting "country")
+    
+    local theme_data=$(get_theme_data)
+    local paths_str=$(echo "$theme_data" | awk -F'|' '{print $1}' | cut -d':' -f2)
+    local primary_path_raw=$(echo "$paths_str" | cut -d',' -f3)
+    if [[ -z "$primary_path_raw" || "$primary_path_raw" == "null" ]]; then
+        primary_path_raw="/assets/img"
+    fi
+    local salted_path=$(get_salted_path "$primary_path_raw")
+    local encoded_path=$(echo -n "$salted_path" | python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.stdin.read()), end='')")
+    
     local dpi_params=$(get_dpi_link_params)
-    echo "vless://${uuid}@${domain}:2053?type=xhttp&security=tls&path=%2F&encryption=none&mode=stream-up&host=${domain}&fp=chrome${dpi_params}#${name}-xhttp-${country}"
+    echo "vless://${uuid}@${domain}:443?type=httpupgrade&security=tls&path=${encoded_path}&encryption=none&host=${domain}&fp=chrome${dpi_params}#${name}-httpupgrade-stealth-${country}"
 }
 
-generate_xhttp_reality_link() {
+generate_vless_grpc_link() {
     local name=$1
     local uuid=$2
     local domain=$(get_setting "domain")
     local country=$(get_setting "country")
-    local sni=$(get_setting "sni")
-    local public_key=$(get_setting "reality_public_key")
-    local short_id=$(get_setting "reality_short_id")
+    local salt=$(get_setting "protocol_salt")
+    local service_name="EdgeContent_${salt}"
+    
     local dpi_params=$(get_dpi_link_params)
-    echo "vless://${uuid}@${domain}:8443?type=xhttp&security=reality&pbk=${public_key}&fp=chrome&sni=${sni}&sid=${short_id}&spx=%2F&mode=stream-up&host=${sni}${dpi_params}#${name}-xhttp-reality-${country}"
-}
-
-generate_tuic_link() {
-    local name=$1
-    local uuid=$2
-    local password=$3
-    local domain=$(get_setting "domain")
-    local country=$(get_setting "country")
-    
-    # TUIC uses uuid and password
-    echo "tuic://${uuid}:${password}@${domain}:8550?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=0#${name}-tuic-${country}"
-}
-
-generate_http_link() {
-    local name=$1
-    local password=$2
-    local domain=$(get_setting "domain")
-    local country=$(get_setting "country")
-    
-    echo "http://${name}:${password}@${domain}:52143#${name}-http-${country}"
-}
-
-generate_socks_link() {
-    local name=$1
-    local password=$2
-    local domain=$(get_setting "domain")
-    local country=$(get_setting "country")
-    
-    echo "socks5://${name}:${password}@${domain}:52144#${name}-socks-${country}"
-}
-
-generate_sudoku_link() {
-    local name=$1
-    local domain=$(get_setting "domain")
-    local country=$(get_setting "country")
-    local sudoku_key=$(get_setting "sudoku_key")
-    
-    echo "sudoku://${sudoku_key}@${domain}:8551?aead_method=chacha20-poly1305&table_type=prefer_entropy#${name}-sudoku-${country}"
-}
-
-generate_trusttunnel_link() {
-    local name=$1
-    local password=$2
-    local domain=$(get_setting "domain")
-    local country=$(get_setting "country")
-    
-    echo "trusttunnel://${name}:${password}@${domain}:8553?alpn=h2,h3#${name}-trusttunnel-${country}"
-}
-
-generate_snell_link() {
-    local name=$1
-    local domain=$(get_setting "domain")
-    local country=$(get_setting "country")
-    local sni=$(get_setting "sni" "$domain")
-    local snell_psk=$(get_setting "snell_psk")
-    
-    echo "snell://${snell_psk}@${domain}:8554?version=4&obfs=tls&host=${sni}#${name}-snell-${country}"
+    echo "vless://${uuid}@${domain}:443?type=grpc&security=tls&serviceName=${service_name}&encryption=none&host=${domain}&fp=chrome${dpi_params}#${name}-grpc-stealth-${country}"
 }
 
 generate_subscription_file() {
@@ -183,18 +135,6 @@ generate_subscription_file() {
                     links+=$(generate_vless_reality_link "$name" "$uuid")
                     links+=$'\n'
                     ;;
-                "hysteria2")
-                    links+=$(generate_hysteria2_link "$name" "$password")
-                    links+=$'\n'
-                    ;;
-                "xhttp")
-                    links+=$(generate_xhttp_link "$name" "$uuid")
-                    links+=$'\n'
-                    ;;
-                "xhttp-reality")
-                    links+=$(generate_xhttp_reality_link "$name" "$uuid")
-                    links+=$'\n'
-                    ;;
                 "tuic")
                     links+=$(generate_tuic_link "$name" "$uuid" "$password")
                     links+=$'\n'
@@ -207,28 +147,12 @@ generate_subscription_file() {
                     links+=$(generate_xhttp_stealth_link "$name" "$uuid")
                     links+=$'\n'
                     ;;
-                "http")
-                    links+=$(generate_http_link "$name" "$password")
+                "vless-httpupgrade")
+                    links+=$(generate_vless_httpupgrade_link "$name" "$uuid")
                     links+=$'\n'
                     ;;
-                "socks")
-                    links+=$(generate_socks_link "$name" "$password")
-                    links+=$'\n'
-                    ;;
-                "shadowtls")
-                    links+=$(generate_shadowtls_link "$name")
-                    links+=$'\n'
-                    ;;
-                "sudoku")
-                    links+=$(generate_sudoku_link "$name")
-                    links+=$'\n'
-                    ;;
-                "trusttunnel")
-                    links+=$(generate_trusttunnel_link "$name" "$password")
-                    links+=$'\n'
-                    ;;
-                "snell")
-                    links+=$(generate_snell_link "$name")
+                "vless-grpc")
+                    links+=$(generate_vless_grpc_link "$name" "$uuid")
                     links+=$'\n'
                     ;;
             esac
@@ -267,7 +191,7 @@ get_subscription_url() {
     if [[ -z "$hash" ]]; then
         hash=$(generate_client_hash "$uuid")
     fi
-    echo "https://${domain}/${hash}"
+    echo "https://${domain}/assets/js/${hash}.bin"
 }
 
 rebuild_config() {
@@ -293,18 +217,6 @@ rebuild_config() {
                 local vless_inbound=$(generate_vless_reality_inbound)
                 inbounds=$(echo "$inbounds" | jq --argjson inbound "$vless_inbound" '. += [$inbound]')
                 ;;
-            "hysteria2")
-                local hysteria_inbound=$(generate_hysteria2_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$hysteria_inbound" '. += [$inbound]')
-                ;;
-            "xhttp")
-                local xhttp_inbound=$(generate_xhttp_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$xhttp_inbound" '. += [$inbound]')
-                ;;
-            "xhttp-reality")
-                local xhttp_reality_inbound=$(generate_xhttp_reality_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$xhttp_reality_inbound" '. += [$inbound]')
-                ;;
             "tuic")
                 local tuic_inbound=$(generate_tuic_inbound)
                 inbounds=$(echo "$inbounds" | jq --argjson inbound "$tuic_inbound" '. += [$inbound]')
@@ -317,33 +229,26 @@ rebuild_config() {
                 local xhttp_stealth_inbound=$(generate_xhttp_stealth_inbound)
                 inbounds=$(echo "$inbounds" | jq --argjson inbound "$xhttp_stealth_inbound" '. += [$inbound]')
                 ;;
-            "http")
-                local http_inbound=$(generate_http_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$http_inbound" '. += [$inbound]')
+            "vless-httpupgrade")
+                local vless_httpupgrade_inbound=$(generate_vless_httpupgrade_inbound)
+                inbounds=$(echo "$inbounds" | jq --argjson inbound "$vless_httpupgrade_inbound" '. += [$inbound]')
                 ;;
-            "socks")
-                local socks_inbound=$(generate_socks_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$socks_inbound" '. += [$inbound]')
-                ;;
-            "shadowtls")
-                local shadowtls_inbound=$(generate_shadowtls_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$shadowtls_inbound" '. += [$inbound]')
-                ;;
-            "sudoku")
-                local sudoku_inbound=$(generate_sudoku_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$sudoku_inbound" '. += [$inbound]')
-                ;;
-            "trusttunnel")
-                local trusttunnel_inbound=$(generate_trusttunnel_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$trusttunnel_inbound" '. += [$inbound]')
-                ;;
-            "snell")
-                local snell_inbound=$(generate_snell_inbound)
-                inbounds=$(echo "$inbounds" | jq --argjson inbound "$snell_inbound" '. += [$inbound]')
+            "vless-grpc")
+                local vless_grpc_inbound=$(generate_vless_grpc_inbound)
+                inbounds=$(echo "$inbounds" | jq --argjson inbound "$vless_grpc_inbound" '. += [$inbound]')
                 ;;
         esac
     done < <(get_protocols)
     
+    # Ensure CONFIG_FILE exists before mutating
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        if [[ -f "$SCRIPT_DIR/templates/config.json.template" ]]; then
+            cp "$SCRIPT_DIR/templates/config.json.template" "$CONFIG_FILE"
+        else
+            echo '{"log":{"level":"info","timestamp":true},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}]}' > "$CONFIG_FILE"
+        fi
+    fi
+
     # Update config.json with error handling
     local tmp=$(mktemp)
     if ! jq --argjson inbounds "$inbounds" '.inbounds = $inbounds' "$CONFIG_FILE" > "$tmp" 2>/dev/null; then
@@ -451,18 +356,27 @@ add_client() {
     echo "Select protocols for these clients:"
     local protocols=($(get_protocols))
     if [[ ${#protocols[@]} -eq 0 ]]; then
+        print_info "Initializing default 443 stealth protocol stack (xhttp-stealth, vless-ws, vless-httpupgrade)..."
+        local default_stack=("xhttp-stealth" "vless-ws" "vless-httpupgrade")
+        for p in "${default_stack[@]}"; do
+            add_protocol_to_settings "$p"
+        done
+        protocols=($(get_protocols))
+    fi
+
+    if [[ ${#protocols[@]} -eq 0 ]]; then
         print_warning "No protocols configured on server. Clients will have no protocols."
         local selected_protos_json="[]"
     else
         for i in "${!protocols[@]}"; do
             echo "$((i+1))) ${protocols[$i]}"
         done
-        echo "Example: 1 2 4, or 'all', or leave empty for none"
-        read -p "Your choice: " p_choice
+        echo "Example: 1 2 4, or 'all', or press Enter for ALL protocols (default)"
+        read -p "Your choice [all]: " p_choice
         
         local selected_protos=()
         p_choice=$(echo "$p_choice" | tr ',' ' ')
-        if [[ "$p_choice" == "all" ]]; then
+        if [[ -z "$p_choice" || "$p_choice" == "all" ]]; then
             selected_protos=("${protocols[@]}")
         else
             for idx in $p_choice; do
@@ -607,21 +521,6 @@ show_client_links_internal() {
                         generate_vless_reality_link "$name" "$uuid"
                         echo ""
                         ;;
-                    "hysteria2")
-                        echo "Hysteria2:"
-                        generate_hysteria2_link "$name" "$password"
-                        echo ""
-                        ;;
-                    "xhttp")
-                        echo "XHTTP:"
-                        generate_xhttp_link "$name" "$uuid"
-                        echo ""
-                        ;;
-                    "xhttp-reality")
-                        echo "XHTTP Reality:"
-                        generate_xhttp_reality_link "$name" "$uuid"
-                        echo ""
-                        ;;
                     "tuic")
                         echo "TUIC v5:"
                         generate_tuic_link "$name" "$uuid" "$password"
@@ -635,36 +534,6 @@ show_client_links_internal() {
                     "xhttp-stealth")
                         echo "XHTTP Stealth (Nginx):"
                         generate_xhttp_stealth_link "$name" "$uuid"
-                        echo ""
-                        ;;
-                    "http")
-                        echo "HTTP (Proxy):"
-                        generate_http_link "$name" "$password"
-                        echo ""
-                        ;;
-                    "socks")
-                        echo "SOCKS5 (Proxy):"
-                        generate_socks_link "$name" "$password"
-                        echo ""
-                        ;;
-                    "shadowtls")
-                        echo "ShadowTLS v3:"
-                        generate_shadowtls_link "$name"
-                        echo ""
-                        ;;
-                    "sudoku")
-                        echo "Sudoku:"
-                        generate_sudoku_link "$name"
-                        echo ""
-                        ;;
-                    "trusttunnel")
-                        echo "TrustTunnel:"
-                        generate_trusttunnel_link "$name" "$password"
-                        echo ""
-                        ;;
-                    "snell")
-                        echo "Snell v4:"
-                        generate_snell_link "$name"
                         echo ""
                         ;;
                 esac
