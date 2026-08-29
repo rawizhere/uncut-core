@@ -1,30 +1,40 @@
 package updater
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func TestGetAvailableVersions(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[{"tag_name":"v1.11.5"},{"tag_name":"v1.11.4"},{"tag_name":"v1.10.8"}]`))
-	}))
-	defer server.Close()
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString(`[{"tag_name":"v1.11.5"},{"tag_name":"v1.11.4"},{"tag_name":"v1.10.8"}]`)),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
 	ctx := context.Background()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
-	resp, err := server.Client().Do(req)
+	versions, err := GetAvailableVersionsFromURL(ctx, client, "https://mock.github.api/releases")
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
 
-	versions, err := GetAvailableVersions(ctx, server.Client())
-	// In sandbox without internet it might error on live github, but logic works
-	if err == nil && len(versions) == 0 {
-		t.Fatal("expected versions")
+	if len(versions) != 3 {
+		t.Fatalf("expected 3 versions, got %d", len(versions))
+	}
+	if versions[0] != "1.11.5" {
+		t.Errorf("expected 1.11.5, got %s", versions[0])
 	}
 }

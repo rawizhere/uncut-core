@@ -20,12 +20,18 @@ type GitHubRelease struct {
 	TagName string `json:"tag_name"`
 }
 
+const DefaultReleasesURL = "https://api.github.com/repos/shtorm-7/sing-box-extended/releases?per_page=15"
+
 func GetAvailableVersions(ctx context.Context, client *http.Client) ([]string, error) {
+	return GetAvailableVersionsFromURL(ctx, client, DefaultReleasesURL)
+}
+
+func GetAvailableVersionsFromURL(ctx context.Context, client *http.Client, releasesURL string) ([]string, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/shtorm-7/sing-box-extended/releases?per_page=15", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releasesURL, nil)
 	if err != nil {
 		return nil, err
 	}

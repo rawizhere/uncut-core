@@ -30,13 +30,9 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 	inbounds := make([]map[string]any, 0)
 	activeProtos := settings.Protocols
 	if len(activeProtos) == 0 {
-		activeProtos = []string{
-			string(config.ProtoXHTTPStealth),
-			string(config.ProtoVLESSWS),
-			string(config.ProtoVLESSHTTPUpgrade),
-			string(config.ProtoVLESSGRPC),
-			string(config.ProtoVLESSReality),
-			string(config.ProtoTUIC),
+		activeProtos = make([]string, len(config.DefaultProtocols))
+		for i, p := range config.DefaultProtocols {
+			activeProtos[i] = string(p)
 		}
 	}
 
@@ -89,7 +85,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":       users,
 			"transport": map[string]any{
 				"type":                   "ws",
-				"path":                   fmt.Sprintf("/assets/css/%s", salt),
+				"path":                   fmt.Sprintf("/v1/streams/live-%s/ws", salt),
 				"max_early_data":         0,
 				"early_data_header_name": "Sec-WebSocket-Protocol",
 			},
@@ -105,7 +101,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":       users,
 			"transport": map[string]any{
 				"type":                     "xhttp",
-				"path":                     fmt.Sprintf("/assets/js/%s", salt),
+				"path":                     fmt.Sprintf("/v1/ingest/push/live-%s", salt),
 				"mode":                     "stream-up",
 				"x_padding_bytes":          "100-2500",
 				"no_sse_header":            false,
@@ -125,7 +121,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":       users,
 			"transport": map[string]any{
 				"type": "httpupgrade",
-				"path": fmt.Sprintf("/assets/img/%s", salt),
+				"path": fmt.Sprintf("/v1/streams/live-%s/upgrade", salt),
 			},
 		}, nil
 
@@ -139,7 +135,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":       users,
 			"transport": map[string]any{
 				"type":         "grpc",
-				"service_name": fmt.Sprintf("EdgeContent_%s", salt),
+				"service_name": "ingest.v1.IngestService",
 			},
 		}, nil
 

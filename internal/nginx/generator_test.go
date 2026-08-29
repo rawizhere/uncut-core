@@ -7,73 +7,65 @@ import (
 	"github.com/rawizhere/uncut-core/internal/config"
 )
 
-func TestGenerateCDNHeadersSnippet(t *testing.T) {
+func TestGenerateOpenAPISpec(t *testing.T) {
 	opts := GeneratorOptions{
-		Domain:       "test.example.com",
-		CFEdgeID:     "d1234567890abcd",
-		CFPop:        "FRA50-C1",
-		AWSReqID:     "test-aws-req-id",
-		ServerHeader: "add_header Server \"CloudFront\" always;",
+		Domain:     "ingest-eu-1.example.com",
+		APIVersion: "2.4.1",
+		Region:     "eu-1",
 	}
 
-	snippet := GenerateCDNHeadersSnippet(opts)
-
-	if !strings.Contains(snippet, "Server \"CloudFront\"") {
-		t.Errorf("Snippet missing Server CloudFront header")
+	spec := GenerateOpenAPISpec(opts)
+	if !strings.Contains(spec, "Ingest API") {
+		t.Errorf("Spec missing title")
 	}
-	if !strings.Contains(snippet, "Via \"1.1 d1234567890abcd.cloudfront.net (CloudFront)\"") {
-		t.Errorf("Snippet missing Via header")
+	if !strings.Contains(spec, "2.4.1") {
+		t.Errorf("Spec missing version")
 	}
-	if !strings.Contains(snippet, "X-Amz-Cf-Pop \"FRA50-C1\"") {
-		t.Errorf("Snippet missing X-Amz-Cf-Pop")
+	if !strings.Contains(spec, "/v1/health") {
+		t.Errorf("Spec missing /v1/health")
 	}
-	if !strings.Contains(snippet, "X-Amz-Cf-Id \"test-aws-req-id=\"") {
-		t.Errorf("Snippet missing X-Amz-Cf-Id")
+	if !strings.Contains(spec, "/ingest.v1.IngestService/Stream") {
+		t.Errorf("Spec missing /ingest.v1.IngestService/Stream")
 	}
 }
 
 func TestGenerateLocationsConfig(t *testing.T) {
 	opts := GeneratorOptions{
-		Domain:       "test.example.com",
-		ProtocolSalt: "xyz987",
+		Domain:       "ingest-eu-1.example.com",
+		ProtocolSalt: "a1b2c3d4",
 		ActiveProtocols: []string{
 			string(config.ProtoXHTTPStealth),
 			string(config.ProtoVLESSWS),
+			string(config.ProtoVLESSHTTPUpgrade),
 			string(config.ProtoVLESSGRPC),
 		},
-		AWSReqID: "req123",
-		HostID:   "host123",
 	}
 
 	locs := GenerateLocationsConfig(opts)
 
-	// xhttp-stealth should proxy to 10002
-	if !strings.Contains(locs, "location ^~ /assets/js/xyz987") {
-		t.Errorf("Missing location /assets/js/xyz987")
+	if !strings.Contains(locs, "location /v1/ingest/push/live-a1b2c3d4") {
+		t.Errorf("Missing location /v1/ingest/push/live-a1b2c3d4")
 	}
 	if !strings.Contains(locs, "proxy_pass http://127.0.0.1:10002;") {
 		t.Errorf("Missing proxy_pass 10002 for xhttp")
 	}
 
-	// vless-ws should proxy to 10001
-	if !strings.Contains(locs, "location ^~ /assets/css/xyz987") {
-		t.Errorf("Missing location /assets/css/xyz987")
+	if !strings.Contains(locs, "location = /v1/streams/live-a1b2c3d4/ws") {
+		t.Errorf("Missing location /v1/streams/live-a1b2c3d4/ws")
 	}
 	if !strings.Contains(locs, "proxy_pass http://127.0.0.1:10001;") {
 		t.Errorf("Missing proxy_pass 10001 for ws")
 	}
 
-	// vless-httpupgrade is inactive, should return 403 S3 XML
-	if !strings.Contains(locs, "location ^~ /assets/img/xyz987") {
-		t.Errorf("Missing location /assets/img/xyz987")
+	if !strings.Contains(locs, "location = /v1/streams/live-a1b2c3d4/upgrade") {
+		t.Errorf("Missing location /v1/streams/live-a1b2c3d4/upgrade")
 	}
-	if !strings.Contains(locs, "AccessDenied") {
-		t.Errorf("Missing 403 S3 XML error for inactive httpupgrade")
+	if !strings.Contains(locs, "proxy_pass http://127.0.0.1:10004;") {
+		t.Errorf("Missing proxy_pass 10004 for httpupgrade")
 	}
 
-	// vless-grpc should grpc_pass to 10003
-	if !strings.Contains(locs, "location ^~ /EdgeContent_xyz987") {
-		t.Errorf("Missing location /EdgeContent_xyz987")
+	if !strings.Contains(locs, "location /ingest.v1.IngestService/") {
+		t.Errorf("Missing location /ingest.v1.IngestService/")
 	}
 	if !strings.Contains(locs, "grpc_pass grpc://127.0.0.1:10003;") {
 		t.Errorf("Missing grpc_pass 10003 for grpc")
@@ -82,23 +74,44 @@ func TestGenerateLocationsConfig(t *testing.T) {
 
 func TestGenerateSiteConfig(t *testing.T) {
 	opts := GeneratorOptions{
-		Domain:            "cdn.test.com",
+		Domain:            "ingest-eu-1.example.com",
 		InstallDir:        "/opt/sing-box",
+		APIVersion:        "2.4.1",
+		Region:            "eu-1",
+		HealthUptime:      "4912",
 		TelegramProxyPort: 8080,
 	}
 
 	siteConf := GenerateSiteConfig(opts)
 
-	if !strings.Contains(siteConf, "server_name cdn.test.com;") {
+	if !strings.Contains(siteConf, "server_name ingest-eu-1.example.com;") {
 		t.Errorf("Site config missing server_name")
 	}
+	if !strings.Contains(siteConf, "ssl_reject_handshake on;") {
+		t.Errorf("Site config missing ssl_reject_handshake on default server")
+	}
+	if !strings.Contains(siteConf, "add_header X-Request-Id $request_id always;") {
+		t.Errorf("Site config missing X-Request-Id header")
+	}
+	if !strings.Contains(siteConf, "add_header X-Ingest-Region \"eu-1\" always;") {
+		t.Errorf("Site config missing X-Ingest-Region header")
+	}
+	if !strings.Contains(siteConf, "add_header X-Ingest-Node \"ingest-eu-1.example.com\" always;") {
+		t.Errorf("Site config missing X-Ingest-Node header")
+	}
+	if !strings.Contains(siteConf, "location = /v1/telemetry/events") {
+		t.Errorf("Site config missing /v1/telemetry/events location")
+	}
+	if !strings.Contains(siteConf, "location = / {") {
+		t.Errorf("Site config missing location = /")
+	}
+	if strings.Contains(siteConf, "/assets/js/([a-f0-9]{32})\\.bin$") {
+		t.Errorf("Site config still contains legacy /assets/js location")
+	}
 	if !strings.Contains(siteConf, "location /api/v1/ {") {
-		t.Errorf("Site config missing Telegram proxy location /api/v1/")
+		t.Errorf("Site config missing /api/v1/ location for telegram bridge")
 	}
-	if !strings.Contains(siteConf, "proxy_pass http://127.0.0.1:8080;") {
-		t.Errorf("Site config missing Telegram proxy pass port 8080")
-	}
-	if !strings.Contains(siteConf, "/assets/js/([a-f0-9]{32})\\.bin$") {
-		t.Errorf("Site config missing subscription regex location")
+	if !strings.Contains(siteConf, "/v1/schemas/([a-f0-9]{32})\\.bin$") {
+		t.Errorf("Site config missing /v1/schemas subscription location")
 	}
 }

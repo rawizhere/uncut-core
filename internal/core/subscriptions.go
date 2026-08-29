@@ -24,11 +24,20 @@ func getDPILinkParams(s config.Settings) string {
 	return params.String()
 }
 
-func getCountry(s config.Settings) string {
-	if s.Country != "" {
-		return s.Country
+func getRegion(s config.Settings) string {
+	if s.Region != "" {
+		return s.Region
 	}
-	return "US"
+	if strings.Contains(s.Domain, "eu-1") {
+		return "eu-1"
+	}
+	if strings.Contains(s.Domain, "eu-2") {
+		return "eu-2"
+	}
+	if strings.Contains(s.Domain, "ap-1") {
+		return "ap-1"
+	}
+	return "eu-1"
 }
 
 func GenerateVLESSRealityLink(client config.Client, s config.Settings) string {
@@ -37,11 +46,11 @@ func GenerateVLESSRealityLink(client config.Client, s config.Settings) string {
 		sni = "dl.google.com"
 	}
 	dpiParams := getDPILinkParams(s)
-	country := getCountry(s)
+	region := getRegion(s)
 
 	return fmt.Sprintf(
-		"vless://%s@%s:8443?type=tcp&encryption=none&security=reality&pbk=%s&fp=chrome&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision%s#%s-vless-reality-%s",
-		client.UUID, s.Domain, s.RealityPubKey, sni, s.RealityShortID, dpiParams, client.Name, country,
+		"vless://%s@%s:8443?type=tcp&encryption=none&security=reality&pbk=%s&fp=chrome&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision%s#%s-%s-01",
+		client.UUID, s.Domain, s.RealityPubKey, sni, s.RealityShortID, dpiParams, client.Name, region,
 	)
 }
 
@@ -54,11 +63,11 @@ func GenerateTUICLink(client config.Client, s config.Settings) string {
 	if pass == "" {
 		pass = client.UUID
 	}
-	country := getCountry(s)
+	region := getRegion(s)
 
 	return fmt.Sprintf(
-		"tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=0#%s-tuic-%s",
-		client.UUID, pass, s.Domain, port, client.Name, country,
+		"tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=0#%s-%s-02",
+		client.UUID, pass, s.Domain, port, client.Name, region,
 	)
 }
 
@@ -67,14 +76,14 @@ func GenerateVLESSWSLink(client config.Client, s config.Settings) string {
 	if salt == "" {
 		salt = "default"
 	}
-	path := fmt.Sprintf("/assets/css/%s", salt)
+	path := fmt.Sprintf("/v1/streams/live-%s/ws", salt)
 	encodedPath := url.PathEscape(path)
 	dpiParams := getDPILinkParams(s)
-	country := getCountry(s)
+	region := getRegion(s)
 
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=chrome%s#%s-vless-ws-%s",
-		client.UUID, s.Domain, encodedPath, dpiParams, client.Name, country,
+		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=chrome%s#%s-%s-03",
+		client.UUID, s.Domain, encodedPath, dpiParams, client.Name, region,
 	)
 }
 
@@ -83,14 +92,14 @@ func GenerateXHTTPStealthLink(client config.Client, s config.Settings) string {
 	if salt == "" {
 		salt = "default"
 	}
-	path := fmt.Sprintf("/assets/js/%s", salt)
+	path := fmt.Sprintf("/v1/ingest/push/live-%s", salt)
 	encodedPath := url.PathEscape(path)
 	dpiParams := getDPILinkParams(s)
-	country := getCountry(s)
+	region := getRegion(s)
 
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=stream-up&host=%s&fp=chrome%s#%s-xhttp-stealth-%s",
-		client.UUID, s.Domain, encodedPath, s.Domain, dpiParams, client.Name, country,
+		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=stream-up&host=%s&fp=chrome%s#%s-%s-04",
+		client.UUID, s.Domain, encodedPath, s.Domain, dpiParams, client.Name, region,
 	)
 }
 
@@ -99,42 +108,33 @@ func GenerateVLESSHTTPUpgradeLink(client config.Client, s config.Settings) strin
 	if salt == "" {
 		salt = "default"
 	}
-	path := fmt.Sprintf("/assets/img/%s", salt)
+	path := fmt.Sprintf("/v1/streams/live-%s/upgrade", salt)
 	encodedPath := url.PathEscape(path)
 	dpiParams := getDPILinkParams(s)
-	country := getCountry(s)
+	region := getRegion(s)
 
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=chrome%s#%s-httpupgrade-stealth-%s",
-		client.UUID, s.Domain, encodedPath, s.Domain, dpiParams, client.Name, country,
+		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=chrome%s#%s-%s-05",
+		client.UUID, s.Domain, encodedPath, s.Domain, dpiParams, client.Name, region,
 	)
 }
 
 func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
-	salt := s.ProtocolSalt
-	if salt == "" {
-		salt = "default"
-	}
-	serviceName := fmt.Sprintf("EdgeContent_%s", salt)
 	dpiParams := getDPILinkParams(s)
-	country := getCountry(s)
+	region := getRegion(s)
 
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=grpc&security=tls&serviceName=%s&encryption=none&host=%s&fp=chrome%s#%s-grpc-stealth-%s",
-		client.UUID, s.Domain, serviceName, s.Domain, dpiParams, client.Name, country,
+		"vless://%s@%s:443?type=grpc&security=tls&serviceName=ingest.v1.IngestService&encryption=none&host=%s&fp=chrome%s#%s-%s-06",
+		client.UUID, s.Domain, s.Domain, dpiParams, client.Name, region,
 	)
 }
 
 func GenerateClientLinks(client config.Client, s config.Settings) []string {
 	activeServerProtos := s.Protocols
 	if len(activeServerProtos) == 0 {
-		activeServerProtos = []string{
-			string(config.ProtoXHTTPStealth),
-			string(config.ProtoVLESSWS),
-			string(config.ProtoVLESSHTTPUpgrade),
-			string(config.ProtoVLESSGRPC),
-			string(config.ProtoVLESSReality),
-			string(config.ProtoTUIC),
+		activeServerProtos = make([]string, len(config.DefaultProtocols))
+		for i, p := range config.DefaultProtocols {
+			activeServerProtos[i] = string(p)
 		}
 	}
 
@@ -184,7 +184,7 @@ func GenerateSubscriptionPayload(client config.Client, s config.Settings) string
 }
 
 func GetSubscriptionURL(domain, subHash string) string {
-	return fmt.Sprintf("https://%s/assets/js/%s.bin", domain, subHash)
+	return fmt.Sprintf("https://%s/v1/schemas/%s.bin", domain, subHash)
 }
 
 func WriteSubscriptionFile(subDir string, client config.Client, s config.Settings) error {

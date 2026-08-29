@@ -4,6 +4,8 @@ set -e
 # Defaults
 DOMAIN=""
 EMAIL=""
+REGION="eu-1"
+API_VERSION="2.4.1"
 CLIENTS="default"
 UNCUT_REF="${UNCUT_REF:-main}"
 
@@ -11,6 +13,8 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -d|--domain) DOMAIN="$2"; shift 2 ;;
         -m|--email) EMAIL="$2"; shift 2 ;;
+        -r|--region) REGION="$2"; shift 2 ;;
+        -v|--api-version) API_VERSION="$2"; shift 2 ;;
         -c|--clients) CLIENTS="$2"; shift 2 ;;
         *) shift ;;
     esac
@@ -18,7 +22,7 @@ done
 
 if [[ -z "$DOMAIN" ]]; then
     echo "Error: --domain is required"
-    echo "Usage: curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/bootstrap.sh | bash -s -- -d <domain> [-m <email>] [-c <clients>]"
+    echo "Usage: curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/bootstrap.sh | bash -s -- -d <domain> [-m <email>] [-r <region>] [-v <version>] [-c <clients>]"
     exit 1
 fi
 
@@ -55,15 +59,31 @@ fi
 systemctl stop apache2 nginx 2>/dev/null || true
 
 # Setup UFW Firewall
+SSH_PORT="22"
+if [ -f /etc/ssh/sshd_config ]; then
+    DETECTED_PORT=$(grep -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | tail -n1)
+    [ -n "$DETECTED_PORT" ] && SSH_PORT="$DETECTED_PORT"
+fi
+
+if ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y -qq ufw >/dev/null 2>&1 || true
+fi
+
 if command -v ufw >/dev/null 2>&1; then
     ufw default deny incoming >/dev/null 2>&1 || true
     ufw default allow outgoing >/dev/null 2>&1 || true
-    ufw allow 22/tcp >/dev/null 2>&1 || true
+    ufw allow "${SSH_PORT}/tcp" >/dev/null 2>&1 || true
     ufw allow 80/tcp >/dev/null 2>&1 || true
     ufw allow 443/tcp >/dev/null 2>&1 || true
     ufw allow 443/udp >/dev/null 2>&1 || true
     ufw allow 8443/tcp >/dev/null 2>&1 || true
+    ufw deny 2398/tcp >/dev/null 2>&1 || true
+    ufw deny 8888/tcp >/dev/null 2>&1 || true
     ufw --force enable >/dev/null 2>&1 || true
+elif command -v iptables >/dev/null 2>&1; then
+    iptables -C INPUT -p tcp --dport 2398 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 2398 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || true
+    iptables -C INPUT -p tcp --dport 8888 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 8888 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || true
 fi
 
 # Setup Fail2ban on Host
@@ -87,8 +107,9 @@ mkdir -p "$INSTALL_DIR/data" "$INSTALL_DIR/install" "$INSTALL_DIR/deployments"
 
 cat > "$INSTALL_DIR/deployments/.env" << ENVEOF
 DOMAIN=${DOMAIN}
-EMAIL=${EMAIL}
-COUNTRY=US
+EMAIL=${EMAIL:-admin@${DOMAIN}}
+REGION=${REGION}
+API_VERSION=${API_VERSION}
 ENVEOF
 
 # Download deployment repository archive or fallback files

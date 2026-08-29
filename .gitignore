@@ -36,6 +36,7 @@ deployments/dev_data/
 Thumbs.db
 .vscode/
 .idea/
+.workbuddy-ai/
 
 # Logs & temp
 *.log

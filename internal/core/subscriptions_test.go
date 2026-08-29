@@ -46,7 +46,7 @@ func TestGenerateClientLinks(t *testing.T) {
 	if !strings.HasPrefix(links[0], "vless://abcd-1234-uuid@vpn.example.com:8443") {
 		t.Errorf("Unexpected reality link: %s", links[0])
 	}
-	if !strings.Contains(links[0], "#alice-vless-reality-SE") {
+	if !strings.Contains(links[0], "#alice-eu-1-01") {
 		t.Errorf("Missing hash tag in reality link: %s", links[0])
 	}
 
@@ -54,12 +54,12 @@ func TestGenerateClientLinks(t *testing.T) {
 	if !strings.HasPrefix(links[1], "tuic://abcd-1234-uuid:passSecret@vpn.example.com:443") {
 		t.Errorf("Unexpected tuic link: %s", links[1])
 	}
-	if !strings.Contains(links[1], "#alice-tuic-SE") {
+	if !strings.Contains(links[1], "#alice-eu-1-02") {
 		t.Errorf("Missing hash tag in tuic link: %s", links[1])
 	}
 
 	// Test VLESS WS
-	if !strings.Contains(links[2], "path=%2Fassets%2Fcss%2Fsalt456") && !strings.Contains(links[2], "path=/assets/css/salt456") {
+	if !strings.Contains(links[2], "path=%2Fv1%2Fstreams%2Flive-salt456%2Fws") && !strings.Contains(links[2], "path=/v1/streams/live-salt456/ws") {
 		t.Errorf("Unexpected ws path in link: %s", links[2])
 	}
 
@@ -69,7 +69,7 @@ func TestGenerateClientLinks(t *testing.T) {
 	}
 
 	// Test VLESS gRPC
-	if !strings.Contains(links[5], "serviceName=EdgeContent_salt456") {
+	if !strings.Contains(links[5], "serviceName=ingest.v1.IngestService") {
 		t.Errorf("Missing serviceName in grpc link: %s", links[5])
 	}
 }

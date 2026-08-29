@@ -66,7 +66,7 @@ func TestGenerateConfig(t *testing.T) {
 		t.Errorf("Missing xhttp-stealth inbound")
 	} else {
 		transport, _ := xhttp["transport"].(map[string]any)
-		if transport["path"] != "/assets/js/a1b2c3d4" {
+		if transport["path"] != "/v1/ingest/push/live-a1b2c3d4" {
 			t.Errorf("Unexpected xhttp path: %v", transport["path"])
 		}
 	}
@@ -76,7 +76,7 @@ func TestGenerateConfig(t *testing.T) {
 		t.Errorf("Missing vless-ws inbound")
 	} else {
 		transport, _ := ws["transport"].(map[string]any)
-		if transport["path"] != "/assets/css/a1b2c3d4" {
+		if transport["path"] != "/v1/streams/live-a1b2c3d4/ws" {
 			t.Errorf("Unexpected ws path: %v", transport["path"])
 		}
 	}
@@ -86,7 +86,7 @@ func TestGenerateConfig(t *testing.T) {
 		t.Errorf("Missing vless-grpc inbound")
 	} else {
 		transport, _ := grpc["transport"].(map[string]any)
-		if transport["service_name"] != "EdgeContent_a1b2c3d4" {
+		if transport["service_name"] != "ingest.v1.IngestService" {
 			t.Errorf("Unexpected grpc service_name: %v", transport["service_name"])
 		}
 	}

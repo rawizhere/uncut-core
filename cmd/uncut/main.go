@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -50,6 +52,8 @@ func main() {
 	rootCmd.AddCommand(delClientCmd())
 	rootCmd.AddCommand(listClientsCmd())
 	rootCmd.AddCommand(syncIPCmd())
+	rootCmd.AddCommand(renewCertCmd())
+	rootCmd.AddCommand(changeDomainCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -271,7 +275,7 @@ func addClientCmd() *cobra.Command {
 			}
 
 			domain, _ := store.GetSetting("domain")
-			subURL := fmt.Sprintf("https://%s/assets/js/%s.bin", domain, client.SubHash)
+			subURL := core.GetSubscriptionURL(domain, client.SubHash)
 			fmt.Printf("Client %s added.\nUUID: %s\nSubscription: %s\n", client.Name, client.UUID, subURL)
 			return nil
 		},
@@ -351,7 +355,7 @@ func listClientsCmd() *cobra.Command {
 
 			fmt.Println("Active Clients:")
 			for _, c := range clients {
-				subURL := fmt.Sprintf("https://%s/assets/js/%s.bin", domain, c.SubHash)
+				subURL := core.GetSubscriptionURL(domain, c.SubHash)
 				fmt.Printf("• %s\n  UUID: %s\n  Subscription: %s\n", c.Name, c.UUID, subURL)
 			}
 			return nil
@@ -394,4 +398,83 @@ func syncIPCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&forceIP, "force", "", "Force specific IPv4 address")
 	return cmd
+}
+
+func renewCertCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "renew-cert",
+		Short: "Force renewal of SSL/TLS certificate",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := initStore()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+
+			opts := setup.DefaultOptions(dataDir, installDir)
+			settings, err := setup.Load(store, opts)
+			if err != nil {
+				return err
+			}
+
+			appCfg, err := config.LoadAppConfig()
+			if err != nil {
+				return err
+			}
+
+			acmeMgr := acme.New(settings.Domain, settings.Email, opts.CertsDir(), opts.WebRoot, false, appCfg.ZeroSSLEABKID, appCfg.ZeroSSLEABHMAC)
+			fmt.Printf("Requesting certificate for %s...\n", settings.Domain)
+			if err := acmeMgr.ForceRenew(); err != nil {
+				return fmt.Errorf("certificate issuance failed: %w", err)
+			}
+
+			_ = exec.Command("nginx", "-s", "reload").Run()
+			fmt.Println("SSL/TLS certificate renewed successfully and Nginx reloaded.")
+			return nil
+		},
+	}
+}
+
+func changeDomainCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "change-domain <domain>",
+		Short: "Change server domain and regenerate certificates",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			newDomain := strings.TrimSpace(strings.ToLower(args[0]))
+			if newDomain == "" {
+				return fmt.Errorf("domain cannot be empty")
+			}
+
+			store, err := initStore()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+
+			if err := store.SetSetting("domain", newDomain); err != nil {
+				return fmt.Errorf("update domain setting: %w", err)
+			}
+
+			opts := setup.DefaultOptions(dataDir, installDir)
+			appCfg, err := config.LoadAppConfig()
+			if err != nil {
+				return err
+			}
+
+			acmeMgr := acme.New(newDomain, appCfg.Email, opts.CertsDir(), opts.WebRoot, false, appCfg.ZeroSSLEABKID, appCfg.ZeroSSLEABHMAC)
+			fmt.Printf("Requesting TLS certificate for %s...\n", newDomain)
+			if err := acmeMgr.ForceRenew(); err != nil {
+				slog.Warn("TLS certificate request failed", "error", err)
+			}
+
+			if err := setup.RebuildAll(cmd.Context(), store, nil, opts); err != nil {
+				return fmt.Errorf("rebuild configs: %w", err)
+			}
+
+			_ = exec.Command("nginx", "-s", "reload").Run()
+			fmt.Printf("Domain successfully changed to %s and all subscriptions updated.\n", newDomain)
+			return nil
+		},
+	}
 }

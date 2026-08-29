@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
+	"github.com/rawizhere/uncut-core/internal/acme"
 	"github.com/rawizhere/uncut-core/internal/config"
 	"github.com/rawizhere/uncut-core/internal/core"
 	"github.com/rawizhere/uncut-core/internal/db"
@@ -48,12 +49,13 @@ func (m *Menu) Run(ctx context.Context) error {
 						huh.NewOption("4. Delete Client", "del"),
 						huh.NewOption("5. Client Details", "client_details"),
 						huh.NewOption("6. Inbound Protocols", "protocols"),
-						huh.NewOption("7. Change Reality SNI", "sni"),
-						huh.NewOption("8. Rotate Protocol Salts", "rotate_salts"),
-						huh.NewOption("9. Service Logs", "logs"),
-						huh.NewOption("10. Server Speedtest", "speedtest"),
-						huh.NewOption("11. Telegram Web Proxy", "tg"),
-						huh.NewOption("12. Maintenance", "maintenance"),
+						huh.NewOption("7. Change Domain", "change_domain"),
+						huh.NewOption("8. Change Reality SNI", "sni"),
+						huh.NewOption("9. Rotate Protocol Salts", "rotate_salts"),
+						huh.NewOption("10. Service Logs", "logs"),
+						huh.NewOption("11. Server Speedtest", "speedtest"),
+						huh.NewOption("12. Telegram Web Proxy", "tg"),
+						huh.NewOption("13. Maintenance", "maintenance"),
 						huh.NewOption("0. Exit", "exit"),
 					).
 					Value(&action),
@@ -77,6 +79,8 @@ func (m *Menu) Run(ctx context.Context) error {
 			m.showClientDetails(ctx)
 		case "protocols":
 			m.manageProtocols(ctx)
+		case "change_domain":
+			m.changeDomain(ctx)
 		case "sni":
 			m.changeRealitySNI(ctx)
 		case "rotate_salts":
@@ -135,7 +139,7 @@ func (m *Menu) listClients() {
 
 	fmt.Println("\nActive Clients:")
 	for _, c := range clients {
-		subURL := fmt.Sprintf("https://%s/assets/js/%s.bin", domain, c.SubHash)
+		subURL := core.GetSubscriptionURL(domain, c.SubHash)
 		fmt.Printf("• %s (UUID: %s)\n  Subscription: %s\n", c.Name, c.UUID, subURL)
 		asciiQR, err := qrcode.GenerateASCII(subURL)
 		if err == nil {
@@ -162,7 +166,7 @@ func (m *Menu) addClient(ctx context.Context) {
 
 	m.rebuildAndReload(ctx)
 	domain, _ := m.store.GetSetting("domain")
-	subURL := fmt.Sprintf("https://%s/assets/js/%s.bin", domain, client.SubHash)
+	subURL := core.GetSubscriptionURL(domain, client.SubHash)
 	fmt.Printf("\nClient %s created successfully.\nSubscription URL: %s\n", client.Name, subURL)
 
 	qr, err := qrcode.GenerateASCII(subURL)
@@ -227,7 +231,7 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 	}
 
 	domain, _ := m.store.GetSetting("domain")
-	subURL := fmt.Sprintf("https://%s/assets/js/%s.bin", domain, client.SubHash)
+	subURL := core.GetSubscriptionURL(domain, client.SubHash)
 
 	for {
 		var action string
@@ -358,6 +362,54 @@ func (m *Menu) manageProtocols(ctx context.Context) {
 	fmt.Printf("\nProtocols updated successfully. Active: %s\n\n", strings.Join(selected, ", "))
 }
 
+func (m *Menu) changeDomain(ctx context.Context) {
+	currentDomain, _ := m.store.GetSetting("domain")
+
+	var newDomain string
+	input := huh.NewInput().
+		Title(fmt.Sprintf("Current Domain: %s\nEnter new server domain:", currentDomain)).
+		Value(&newDomain)
+
+	if err := input.Run(); err != nil {
+		return
+	}
+
+	newDomain = strings.TrimSpace(strings.ToLower(newDomain))
+	if newDomain == "" || newDomain == currentDomain {
+		return
+	}
+
+	var confirm bool
+	cForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Confirm changing domain to %s?", newDomain)).
+				Value(&confirm),
+		),
+	)
+	if err := cForm.Run(); err != nil || !confirm {
+		return
+	}
+
+	if err := m.store.SetSetting("domain", newDomain); err != nil {
+		fmt.Printf("Failed to update domain: %v\n\n", err)
+		return
+	}
+
+	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
+	appCfg, err := config.LoadAppConfig()
+	if err == nil {
+		acmeMgr := acme.New(newDomain, appCfg.Email, opts.CertsDir(), opts.WebRoot, false, appCfg.ZeroSSLEABKID, appCfg.ZeroSSLEABHMAC)
+		fmt.Printf("\nRequesting TLS certificate for %s...\n", newDomain)
+		if err := acmeMgr.ForceRenew(); err != nil {
+			fmt.Printf("TLS certificate issuance warning: %v\n", err)
+		}
+	}
+
+	m.rebuildAndReload(ctx)
+	fmt.Printf("\nDomain successfully changed to %s and all subscriptions updated.\n\n", newDomain)
+}
+
 func (m *Menu) changeRealitySNI(ctx context.Context) {
 	currentSNI, _ := m.store.GetSetting("sni")
 	if currentSNI == "" {
@@ -447,8 +499,9 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 					Options(
 						huh.NewOption("1. Restart All Services", "restart"),
 						huh.NewOption("2. Switch Sing-box Extended Version", "singbox_version"),
-						huh.NewOption("3. Export Database Backup", "backup"),
-						huh.NewOption("4. Import Database Backup", "import_backup"),
+						huh.NewOption("3. Renew TLS Certificate", "renew_cert"),
+						huh.NewOption("4. Export Database Backup", "backup"),
+						huh.NewOption("5. Import Database Backup", "import_backup"),
 						huh.NewOption("0. Back", "back"),
 					).
 					Value(&mAction),
@@ -465,12 +518,39 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 			fmt.Println("\nAll system services restarted successfully.")
 		case "singbox_version":
 			m.switchSingboxVersion(ctx)
+		case "renew_cert":
+			m.renewCertificate(ctx)
 		case "backup":
 			m.exportBackup()
 		case "import_backup":
 			m.importBackup(ctx)
 		}
 	}
+}
+
+func (m *Menu) renewCertificate(ctx context.Context) {
+	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
+	settings, err := setup.Load(m.store, opts)
+	if err != nil {
+		fmt.Printf("Failed to load settings: %v\n\n", err)
+		return
+	}
+
+	fmt.Printf("\nRequesting TLS certificate for %s...\n", settings.Domain)
+	appCfg, err := config.LoadAppConfig()
+	if err != nil {
+		fmt.Printf("Failed to load app config: %v\n\n", err)
+		return
+	}
+
+	acmeMgr := acme.New(settings.Domain, settings.Email, opts.CertsDir(), opts.WebRoot, false, appCfg.ZeroSSLEABKID, appCfg.ZeroSSLEABHMAC)
+	if err := acmeMgr.ForceRenew(); err != nil {
+		fmt.Printf("Certificate issuance error: %v\n\n", err)
+		return
+	}
+
+	m.rebuildAndReload(ctx)
+	fmt.Println("TLS Certificate renewed successfully and services reloaded.")
 }
 
 func (m *Menu) switchSingboxVersion(ctx context.Context) {

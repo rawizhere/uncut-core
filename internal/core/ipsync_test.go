@@ -1,9 +1,10 @@
 package core
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,15 +12,25 @@ import (
 	"github.com/rawizhere/uncut-core/internal/db"
 )
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
 func TestGetPublicIPv4FromEndpoints_Success(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("198.51.100.42\n"))
-	}))
-	defer server.Close()
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString("198.51.100.42\n")),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
 	ctx := context.Background()
-	ip, err := GetPublicIPv4FromEndpoints(ctx, server.Client(), server.URL)
+	ip, err := GetPublicIPv4FromEndpoints(ctx, client, "https://mock.ip.endpoint")
 	if err != nil {
 		t.Fatalf("GetPublicIPv4FromEndpoints failed: %v", err)
 	}
@@ -30,19 +41,25 @@ func TestGetPublicIPv4FromEndpoints_Success(t *testing.T) {
 }
 
 func TestGetPublicIPv4FromEndpoints_Fallback(t *testing.T) {
-	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer badServer.Close()
-
-	goodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("203.0.113.10\n"))
-	}))
-	defer goodServer.Close()
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host == "bad.endpoint" {
+				return &http.Response{
+					StatusCode: http.StatusInternalServerError,
+					Body:       io.NopCloser(bytes.NewBufferString("error")),
+					Header:     make(http.Header),
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString("203.0.113.10\n")),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
 	ctx := context.Background()
-	ip, err := GetPublicIPv4FromEndpoints(ctx, goodServer.Client(), badServer.URL, goodServer.URL)
+	ip, err := GetPublicIPv4FromEndpoints(ctx, client, "https://bad.endpoint", "https://good.endpoint")
 	if err != nil {
 		t.Fatalf("GetPublicIPv4FromEndpoints failed on fallback: %v", err)
 	}
@@ -53,12 +70,6 @@ func TestGetPublicIPv4FromEndpoints_Fallback(t *testing.T) {
 }
 
 func TestSyncServerIP(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("192.0.2.1"))
-	}))
-	defer server.Close()
-
 	tmpDir, err := os.MkdirTemp("", "ipsync_test_*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
@@ -72,17 +83,23 @@ func TestSyncServerIP(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	ctx := context.Background()
+	client := &http.Client{
+		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString("192.0.2.1")),
+				Header:     make(http.Header),
+			}, nil
+		}),
+	}
 
-	// Initial sync with custom mock endpoint
-	ip, err := GetPublicIPv4FromEndpoints(ctx, server.Client(), server.URL)
+	ctx := context.Background()
+	ip, err := GetPublicIPv4FromEndpoints(ctx, client, "https://mock.endpoint")
 	if err != nil {
 		t.Fatalf("GetPublicIPv4FromEndpoints failed: %v", err)
 	}
 
 	_ = store.SetSetting("server_ip", "10.0.0.1")
-
-	// Verify update when different
 	_ = store.SetSetting("server_ip", ip)
 	val, err := store.GetSetting("server_ip")
 	if err != nil || val != "192.0.2.1" {

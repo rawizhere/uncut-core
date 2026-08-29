@@ -25,6 +25,8 @@ type AppConfig struct {
 	ZeroSSLEABKID  string `env:"ZEROSSL_EAB_KID"`
 	ZeroSSLEABHMAC string `env:"ZEROSSL_EAB_HMAC"`
 	Clients        string `env:"CLIENTS"`
+	APIVersion     string `env:"API_VERSION"`
+	Region         string `env:"REGION"`
 	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
 }
 
@@ -59,6 +61,14 @@ const (
 	ProtoVLESSReality     InboundProtocol = "vless-reality"
 	ProtoTUIC             InboundProtocol = "tuic"
 )
+
+var DefaultProtocols = []InboundProtocol{
+	ProtoXHTTPStealth,
+	ProtoVLESSWS,
+	ProtoVLESSHTTPUpgrade,
+	ProtoVLESSGRPC,
+	ProtoTUIC,
+}
 
 var ValidProtocols = []InboundProtocol{
 	ProtoXHTTPStealth,
@@ -109,15 +119,15 @@ type Settings struct {
 	MTProtoSecret     string   `json:"mtproto_secret,omitempty"`
 	MTProtoRawSecret  string   `json:"mtproto_raw_secret,omitempty"`
 	TelegramProxyPort string   `json:"telegram_proxy_port,omitempty"`
-	CFEdgeID          string   `json:"cf_edge_id,omitempty"`
-	CFPop             string   `json:"cf_pop,omitempty"`
-	AWSReqID          string   `json:"aws_req_id,omitempty"`
-	HostID            string   `json:"host_id,omitempty"`
+	APIVersion        string   `json:"api_version,omitempty"`
+	Region            string   `json:"region,omitempty"`
+	HealthUptime      string   `json:"health_uptime,omitempty"`
 	DPIFragment       string   `json:"dpi_fragment,omitempty"`
 	DPIPadding        string   `json:"dpi_padding,omitempty"`
 }
 
 const (
+	DefaultDomain            = "ingest-eu-1.example.com"
 	DefaultSNI               = "dl.google.com"
 	DefaultTUICPort          = "443"
 	DefaultTelegramProxyPort = "8080"

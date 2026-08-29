@@ -54,7 +54,14 @@ func (o Options) CertsDir() string {
 }
 
 func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Options) (config.Settings, error) {
-	if _, err := setting(store, "domain", cfg.Domain); err != nil {
+	if cfg.Domain != "" {
+		currentDomain, _ := store.GetSetting("domain")
+		if currentDomain != cfg.Domain {
+			if err := store.SetSetting("domain", cfg.Domain); err != nil {
+				return config.Settings{}, fmt.Errorf("domain: %w", err)
+			}
+		}
+	} else if _, err := setting(store, "domain", config.DefaultDomain); err != nil {
 		return config.Settings{}, fmt.Errorf("domain: %w", err)
 	}
 
@@ -79,17 +86,10 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	}
 
 	generators := map[string]func() (string, error){
-		"protocol_salt":  func() (string, error) { return randomToken(saltLength) },
-		"cdn_pop":        func() (string, error) { return nginx.RandomPOP(), nil },
-		"aws_request_id": func() (string, error) { return randomToken(54) },
-		"host_id":        func() (string, error) { return randomToken(27) },
-		"cdn_edge_id": func() (string, error) {
-			suffix, err := randomHex(7)
-			if err != nil {
-				return "", err
-			}
-			return "d" + suffix, nil
-		},
+		"protocol_salt": func() (string, error) { return randomHex(4) },
+		"api_version":   func() (string, error) { return randomAPIVersion(cfg.APIVersion), nil },
+		"region":        func() (string, error) { return determineRegion(cfg.Region, store), nil },
+		"health_uptime": func() (string, error) { return randomHealthUptime(), nil },
 		"mtproto_raw_secret": func() (string, error) {
 			return randomHex(16)
 		},
@@ -128,7 +128,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	for key, fallback := range map[string]string{
 		"tuic_port":           config.DefaultTUICPort,
 		"telegram_proxy_port": config.DefaultTelegramProxyPort,
-		"protocols":           strings.Join(stringProtocols(config.ValidProtocols), ","),
+		"protocols":           strings.Join(stringProtocols(config.DefaultProtocols), ","),
 	} {
 		if _, err := setting(store, key, fallback); err != nil {
 			return config.Settings{}, err
@@ -191,10 +191,9 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		MTProtoSecret:     get(store, "mtproto_secret"),
 		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
 		TelegramProxyPort: get(store, "telegram_proxy_port"),
-		CFEdgeID:          get(store, "cdn_edge_id"),
-		CFPop:             get(store, "cdn_pop"),
-		AWSReqID:          get(store, "aws_request_id"),
-		HostID:            get(store, "host_id"),
+		APIVersion:        get(store, "api_version"),
+		Region:            get(store, "region"),
+		HealthUptime:      get(store, "health_uptime"),
 		DPIFragment:       get(store, "dpi_fragment"),
 		DPIPadding:        get(store, "dpi_padding"),
 	}
@@ -275,12 +274,46 @@ func generatorOptions(settings config.Settings, opts Options) (nginx.GeneratorOp
 		LogDir:            settings.LogDir,
 		WebRoot:           opts.WebRoot,
 		ActiveProtocols:   settings.Protocols,
-		CFEdgeID:          settings.CFEdgeID,
-		CFPop:             settings.CFPop,
-		AWSReqID:          settings.AWSReqID,
-		HostID:            settings.HostID,
+		APIVersion:        settings.APIVersion,
+		Region:            settings.Region,
+		HealthUptime:      settings.HealthUptime,
 		TelegramProxyPort: port,
 	}, nil
+}
+
+func randomAPIVersion(preferred string) string {
+	if preferred != "" {
+		return preferred
+	}
+	versions := []string{"2.4.1", "2.3.0", "2.5.0", "2.4.3"}
+	idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(versions))))
+	return versions[idx.Int64()]
+}
+
+func determineRegion(preferred string, store *db.Store) string {
+	if preferred != "" {
+		return preferred
+	}
+	domain := get(store, "domain")
+	switch {
+	case strings.Contains(domain, "eu-1"):
+		return "eu-1"
+	case strings.Contains(domain, "eu-2"):
+		return "eu-2"
+	case strings.Contains(domain, "ap-1"):
+		return "ap-1"
+	case strings.Contains(domain, "us-1"):
+		return "us-1"
+	default:
+		regions := []string{"eu-1", "eu-2", "ap-1"}
+		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(regions))))
+		return regions[idx.Int64()]
+	}
+}
+
+func randomHealthUptime() string {
+	n, _ := rand.Int(rand.Reader, big.NewInt(7200))
+	return strconv.Itoa(int(n.Int64()) + 1800)
 }
 
 func ensureRealityKeys(store *db.Store) error {

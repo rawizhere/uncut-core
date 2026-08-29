@@ -48,7 +48,7 @@ func EnsureSiteIndex(publicDir string) error {
 		return nil
 	}
 
-	indexHTML := `<!DOCTYPE html><html><head><title>Edge Gateway</title></head><body><h3>Distribution Active</h3></body></html>`
+	indexHTML := `<!DOCTYPE html><html><head><title>Edge Ingest Gateway</title></head><body><h3>Gateway Active</h3></body></html>`
 	return renameio.WriteFile(indexPath, []byte(indexHTML), 0o644)
 }
 

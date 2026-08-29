@@ -1,10 +1,8 @@
 package nginx
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,13 +10,6 @@ import (
 	"github.com/google/renameio/v2"
 	"github.com/rawizhere/uncut-core/internal/config"
 )
-
-var defaultPOPList = []string{
-	"FRA50-C1", "IAD89-C2", "LHR61-C1", "NRT57-C2",
-	"SIN52-C1", "SYD62-C2", "AMS54-C1", "CDG50-C1",
-	"DFW55-C3", "HEL50-C2", "HKG54-C1", "JFK50-P3",
-	"LAX50-P1", "MAD50-C1", "MIA50-C1", "SFO50-C1",
-}
 
 const (
 	subsZoneName = "anti_subs"
@@ -33,21 +24,17 @@ type GeneratorOptions struct {
 	WebRoot           string
 	ProtocolSalt      string
 	ActiveProtocols   []string
-	CFEdgeID          string
-	CFPop             string
-	AWSReqID          string
-	HostID            string
-	ServerHeader      string
+	APIVersion        string
+	Region            string
+	HealthUptime      string
 	TelegramProxyPort int
 }
 
 type Paths struct {
-	IncludeDir  string
-	SiteFile    string
-	SnippetsDir string
-	CDNHeaders  string
-	Locations   string
-	LimitsFile  string
+	IncludeDir string
+	SiteFile   string
+	Locations  string
+	LimitsFile string
 }
 
 func (opts *GeneratorOptions) normalize() {
@@ -66,20 +53,14 @@ func (opts *GeneratorOptions) normalize() {
 	if opts.WebRoot == "" {
 		opts.WebRoot = "/var/www/html"
 	}
-	if opts.CFEdgeID == "" {
-		opts.CFEdgeID = "d" + randomHex(7)
+	if opts.APIVersion == "" {
+		opts.APIVersion = "2.4.1"
 	}
-	if opts.CFPop == "" {
-		opts.CFPop = RandomPOP()
+	if opts.Region == "" {
+		opts.Region = "eu-1"
 	}
-	if opts.AWSReqID == "" {
-		opts.AWSReqID = randomBase62(54)
-	}
-	if opts.HostID == "" {
-		opts.HostID = randomBase62(27)
-	}
-	if opts.ServerHeader == "" {
-		opts.ServerHeader = "add_header Server \"CloudFront\" always;"
+	if opts.HealthUptime == "" {
+		opts.HealthUptime = "4912"
 	}
 	if opts.TelegramProxyPort <= 0 {
 		opts.TelegramProxyPort = 8080
@@ -88,8 +69,7 @@ func (opts *GeneratorOptions) normalize() {
 
 func DetectPaths(installDir string) Paths {
 	paths := Paths{
-		SnippetsDir: "/etc/nginx/snippets",
-		Locations:   filepath.Join(installDir, "nginx_locations.conf"),
+		Locations: filepath.Join(installDir, "nginx_locations.conf"),
 	}
 
 	switch {
@@ -104,7 +84,6 @@ func DetectPaths(installDir string) Paths {
 		paths.SiteFile = "/etc/nginx/conf.d/uncut.conf"
 	}
 
-	paths.CDNHeaders = filepath.Join(paths.SnippetsDir, "cdn_headers.conf")
 	paths.LimitsFile = filepath.Join(paths.IncludeDir, "00-uncut-limits.conf")
 	return paths
 }
@@ -112,15 +91,13 @@ func DetectPaths(installDir string) Paths {
 func WriteFiles(opts GeneratorOptions, paths Paths) error {
 	opts.normalize()
 
-	for _, dir := range []string{paths.SnippetsDir, paths.IncludeDir, opts.SubsDir, opts.LogDir, opts.WebRoot} {
+	docsDir := filepath.Join(opts.WebRoot, "docs")
+	for _, dir := range []string{paths.IncludeDir, opts.SubsDir, opts.LogDir, opts.WebRoot, docsDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
 
-	if err := write(paths.CDNHeaders, []byte(GenerateCDNHeadersSnippet(opts)), 0o644); err != nil {
-		return err
-	}
 	if err := write(paths.Locations, []byte(GenerateLocationsConfig(opts)), 0o644); err != nil {
 		return err
 	}
@@ -128,6 +105,22 @@ func WriteFiles(opts GeneratorOptions, paths Paths) error {
 		return err
 	}
 	if err := writeLimits(paths.LimitsFile); err != nil {
+		return err
+	}
+
+	if err := write(filepath.Join(opts.WebRoot, "index.html"), []byte(GenerateLandingHTML(opts)), 0o644); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(opts.WebRoot, "favicon.ico"), []byte(GenerateFaviconSVG()), 0o644); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(opts.WebRoot, "robots.txt"), []byte("User-agent: *\nDisallow: /docs/\n"), 0o644); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(docsDir, "openapi.json"), []byte(GenerateOpenAPISpec(opts)), 0o644); err != nil {
+		return err
+	}
+	if err := write(filepath.Join(docsDir, "index.html"), []byte(GenerateSwaggerHTML(opts)), 0o644); err != nil {
 		return err
 	}
 
@@ -159,23 +152,6 @@ func linkSiteFile(paths Paths) error {
 	return nil
 }
 
-func GenerateCDNHeadersSnippet(opts GeneratorOptions) string {
-	opts.normalize()
-	var sb strings.Builder
-	sb.WriteString(opts.ServerHeader)
-	sb.WriteString("\n")
-	sb.WriteString("add_header X-Cache \"Hit from cloudfront\" always;\n")
-	fmt.Fprintf(&sb, "add_header Via \"1.1 %s.cloudfront.net (CloudFront)\" always;\n", opts.CFEdgeID)
-	sb.WriteString("add_header Accept-Ranges \"bytes\" always;\n")
-	sb.WriteString("add_header Vary \"Accept-Encoding, Origin\" always;\n")
-	sb.WriteString("add_header Age \"$cache_age\" always;\n")
-	fmt.Fprintf(&sb, "add_header X-Amz-Cf-Id \"%s=\" always;\n", opts.AWSReqID)
-	fmt.Fprintf(&sb, "add_header X-Amz-Cf-Pop \"%s\" always;\n", opts.CFPop)
-	sb.WriteString("add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n")
-	sb.WriteString("add_header Alt-Svc 'h3=\":443\"; ma=86400' always;\n")
-	return sb.String()
-}
-
 func GenerateLocationsConfig(opts GeneratorOptions) string {
 	opts.normalize()
 	active := make(map[string]bool)
@@ -186,10 +162,9 @@ func GenerateLocationsConfig(opts GeneratorOptions) string {
 	salt := opts.ProtocolSalt
 	var sb strings.Builder
 
-	xhttpPath := fmt.Sprintf("/assets/js/%s", salt)
-	sb.WriteString("    # Masked Location: /assets/js\n")
-	fmt.Fprintf(&sb, "    location ^~ %s {\n", xhttpPath)
 	if active[string(config.ProtoXHTTPStealth)] {
+		xhttpPath := fmt.Sprintf("/v1/ingest/push/live-%s", salt)
+		fmt.Fprintf(&sb, "    location %s {\n", xhttpPath)
 		sb.WriteString("        proxy_pass http://127.0.0.1:10002;\n")
 		sb.WriteString("        proxy_http_version 1.1;\n")
 		sb.WriteString("        proxy_buffering off;\n")
@@ -204,17 +179,12 @@ func GenerateLocationsConfig(opts GeneratorOptions) string {
 		sb.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 		sb.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
 		sb.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
-		sb.WriteString("        add_header X-Amz-Cf-Id \"redacted\" always;\n")
-		sb.WriteString("        add_header X-Edge-Origin-Shield \"active\" always;\n")
-	} else {
-		sb.WriteString(s3Denied(opts, "/assets/js"))
+		sb.WriteString("    }\n\n")
 	}
-	sb.WriteString("    }\n\n")
 
-	wsPath := fmt.Sprintf("/assets/css/%s", salt)
-	sb.WriteString("    # Masked Location: /assets/css\n")
-	fmt.Fprintf(&sb, "    location ^~ %s {\n", wsPath)
 	if active[string(config.ProtoVLESSWS)] {
+		wsPath := fmt.Sprintf("/v1/streams/live-%s/ws", salt)
+		fmt.Fprintf(&sb, "    location = %s {\n", wsPath)
 		sb.WriteString("        proxy_pass http://127.0.0.1:10001;\n")
 		sb.WriteString("        proxy_http_version 1.1;\n")
 		sb.WriteString("        proxy_buffering off;\n")
@@ -226,17 +196,12 @@ func GenerateLocationsConfig(opts GeneratorOptions) string {
 		sb.WriteString("        proxy_set_header Host $host;\n")
 		sb.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 		sb.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		sb.WriteString("        add_header X-Amz-Cf-Id \"redacted\" always;\n")
-		sb.WriteString("        add_header X-Edge-Origin-Shield \"active\" always;\n")
-	} else {
-		sb.WriteString(s3Denied(opts, "/assets/css"))
+		sb.WriteString("    }\n\n")
 	}
-	sb.WriteString("    }\n\n")
 
-	httpUpgradePath := fmt.Sprintf("/assets/img/%s", salt)
-	sb.WriteString("    # Masked Location: /assets/img\n")
-	fmt.Fprintf(&sb, "    location ^~ %s {\n", httpUpgradePath)
 	if active[string(config.ProtoVLESSHTTPUpgrade)] {
+		httpUpgradePath := fmt.Sprintf("/v1/streams/live-%s/upgrade", salt)
+		fmt.Fprintf(&sb, "    location = %s {\n", httpUpgradePath)
 		sb.WriteString("        proxy_pass http://127.0.0.1:10004;\n")
 		sb.WriteString("        proxy_http_version 1.1;\n")
 		sb.WriteString("        proxy_buffering off;\n")
@@ -248,17 +213,11 @@ func GenerateLocationsConfig(opts GeneratorOptions) string {
 		sb.WriteString("        proxy_set_header Host $host;\n")
 		sb.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
 		sb.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		sb.WriteString("        add_header X-Amz-Cf-Id \"redacted\" always;\n")
-		sb.WriteString("        add_header X-Edge-Origin-Shield \"active\" always;\n")
-	} else {
-		sb.WriteString(s3Denied(opts, "/assets/img"))
+		sb.WriteString("    }\n\n")
 	}
-	sb.WriteString("    }\n\n")
 
 	if active[string(config.ProtoVLESSGRPC)] {
-		grpcPath := fmt.Sprintf("/EdgeContent_%s", salt)
-		sb.WriteString("    # Masked Location: EdgeContent\n")
-		fmt.Fprintf(&sb, "    location ^~ %s {\n", grpcPath)
+		sb.WriteString("    location /ingest.v1.IngestService/ {\n")
 		sb.WriteString("        grpc_pass grpc://127.0.0.1:10003;\n")
 		sb.WriteString("        client_max_body_size 0;\n")
 		sb.WriteString("        client_body_buffer_size 512k;\n")
@@ -273,36 +232,13 @@ func GenerateLocationsConfig(opts GeneratorOptions) string {
 	return sb.String()
 }
 
-func s3Denied(opts GeneratorOptions, resource string) string {
-	var sb strings.Builder
-	sb.WriteString("        include /etc/nginx/snippets/cdn_headers.conf;\n")
-	sb.WriteString("        add_header x-amz-request-id \"$request_id\" always;\n")
-	sb.WriteString("        default_type application/xml;\n")
-	fmt.Fprintf(&sb, "        return 403 '<?xml version=\"1.0\" encoding=\"UTF-8\"?>\\n<Error>\\n    <Code>AccessDenied</Code>\\n    <Message>Access Denied</Message>\\n    <RequestId>%s</RequestId>\\n    <HostId>%s</HostId>\\n    <Resource>%s</Resource>\\n</Error>';\n", opts.AWSReqID, opts.HostID, resource)
-	return sb.String()
-}
-
 func GenerateSiteConfig(opts GeneratorOptions) string {
 	opts.normalize()
 	domain := opts.Domain
 	installDir := opts.InstallDir
 	telegramPort := opts.TelegramProxyPort
 
-	return fmt.Sprintf(`map $msec $cache_age {
-    ~0$ "0";
-    ~1$ "2";
-    ~2$ "7";
-    ~3$ "15";
-    ~4$ "23";
-    ~5$ "0";
-    ~6$ "35";
-    ~7$ "0";
-    ~8$ "48";
-    ~9$ "61";
-    default "0";
-}
-
-map $http_upgrade $connection_upgrade {
+	return fmt.Sprintf(`map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
@@ -330,25 +266,10 @@ server {
 }
 
 server {
-    listen 443 ssl http2 default_server;
+    listen 443 ssl default_server;
     server_name _;
     server_tokens off;
-    ssl_certificate %s/certs/certificates/%s.crt;
-    ssl_certificate_key %s/certs/certificates/%s.key;
-
-    include /etc/nginx/snippets/cdn_headers.conf;
-    add_header x-amz-request-id "%s" always;
-    add_header x-amz-bucket-region "eu-central-1" always;
-    default_type application/xml;
-
-    return 403 '<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-    <Code>AccessDenied</Code>
-    <Message>Access Denied</Message>
-    <RequestId>%s</RequestId>
-    <HostId>%s</HostId>
-    <Resource>/</Resource>
-</Error>';
+    ssl_reject_handshake on;
 }
 
 server {
@@ -362,7 +283,7 @@ server {
     ssl_certificate %s/certs/certificates/%s.crt;
     ssl_certificate_key %s/certs/certificates/%s.key;
     ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
     ssl_prefer_server_ciphers off;
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1h;
@@ -370,10 +291,14 @@ server {
     ssl_stapling on;
     ssl_stapling_verify on;
 
-    include /etc/nginx/snippets/cdn_headers.conf;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Request-Id $request_id always;
+    add_header X-Ingest-Region "%s" always;
+    add_header X-Ingest-Node "%s" always;
 
-    add_header Access-Control-Allow-Origin "*" always;
-    add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+    root %s;
+    index index.html;
 
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -385,26 +310,53 @@ server {
     client_body_buffer_size 512k;
     client_max_body_size 0;
 
-    location ~ "^/([a-f0-9]{32})$" {
-        limit_req zone=%s burst=20 nodelay;
-        alias %s/$1;
-        default_type "application/octet-stream";
-        add_header Content-Disposition "inline";
+    location = /favicon.ico {
+        log_not_found off;
+        access_log off;
+        try_files /favicon.ico =204;
     }
 
-    location ~ "^/assets/js/([a-f0-9]{32})\.bin$" {
+    location = /v1/health {
+        default_type application/json;
+        return 200 '{"status":"healthy","version":"%s","region":"%s","node_id":"%s","timestamp":"$time_iso8601","healthy_nodes":3}\n';
+    }
+
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location = /v1/telemetry/events {
+        default_type application/json;
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "POST, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Stream-Key" always;
+            add_header Content-Length 0;
+            add_header Content-Type "text/plain";
+            return 200;
+        }
+        if ($request_method != POST) {
+            return 405 '{"error":"method_not_allowed","message":"telemetry ingest requires POST"}\n';
+        }
+        return 202 '{"accepted":1,"batch_id":"$request_id","status":"queued"}\n';
+    }
+
+    location = /docs/openapi.json {
+        default_type application/json;
+        try_files /docs/openapi.json =404;
+    }
+
+    location /docs/ {
+        try_files $uri $uri/ /docs/index.html =404;
+    }
+
+    location ~ "^/v1/schemas/([a-f0-9]{32})\.bin$" {
         limit_req zone=%s burst=20 nodelay;
         alias %s/$1;
         default_type "application/octet-stream";
         add_header Content-Disposition "inline";
         add_header Cache-Control "private, no-cache, no-store, must-revalidate" always;
-    }
-
-    location /images/ {
-        include /etc/nginx/snippets/cdn_headers.conf;
-        root /var/www/cdn;
-        expires 30d;
-        try_files $uri =404;
     }
 
     include %s/nginx_locations.conf;
@@ -425,67 +377,295 @@ server {
         proxy_send_timeout 60s;
     }
 
-    location @s3error {
-        include /etc/nginx/snippets/cdn_headers.conf;
-        add_header x-amz-request-id "%s" always;
-        add_header x-amz-bucket-region "eu-central-1" always;
-        default_type application/xml;
-        return 403 '<?xml version="1.0" encoding="UTF-8"?>
-<Error>
-    <Code>AccessDenied</Code>
-    <Message>Access Denied</Message>
-    <RequestId>%s</RequestId>
-    <HostId>%s</HostId>
-    <Resource>$request_uri</Resource>
-</Error>';
+    error_page 404 = @not_found;
+
+    location @not_found {
+        default_type application/json;
+        return 404 '{"error":"Not Found","code":404}\n';
     }
 
-    location / {
+    location = / {
         if ($arg_bridge != "") {
             proxy_pass http://127.0.0.1:%d;
             break;
         }
-        if ($http_upgrade = "websocket") {
-            proxy_pass http://127.0.0.1:%d;
-            break;
-        }
+        try_files /index.html =404;
+    }
 
+    location / {
         if ($request_method = OPTIONS) {
             add_header Access-Control-Allow-Origin "*" always;
-            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS, POST, PUT, DELETE" always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS, POST" always;
             add_header Access-Control-Allow-Headers "*" always;
             add_header Content-Length 0;
             add_header Content-Type "text/plain";
             return 200;
         }
 
-        error_page 403 = @s3error;
-        return 403;
+        return 404;
     }
 }
 `,
 		domain,
 		opts.WebRoot,
-		installDir, domain, installDir, domain,
-		opts.AWSReqID, opts.AWSReqID, opts.HostID,
 		domain,
 		opts.LogDir, opts.LogDir,
 		installDir, domain, installDir, domain,
-		subsZoneName, opts.SubsDir,
+		opts.Region, domain,
+		opts.WebRoot,
+		opts.APIVersion, opts.Region, domain,
 		subsZoneName, opts.SubsDir,
 		installDir,
 		telegramPort,
-		opts.AWSReqID, opts.AWSReqID, opts.HostID,
-		telegramPort, telegramPort,
+		telegramPort,
 	)
 }
 
-func RandomPOP() string {
-	idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(defaultPOPList))))
-	if err != nil {
-		return defaultPOPList[0]
+func GenerateFaviconSVG() string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0f172a"/><path d="M8 16h3l3-7 4 14 3-7h3" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>`
+}
+
+func GenerateLandingHTML(opts GeneratorOptions) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Distributed Ingestion Network</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <style>
+        :root { --bg: #090d16; --surface: #111827; --border: #1f293d; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --green: #10b981; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background: var(--bg); color: var(--text); padding: 48px 24px; line-height: 1.5; font-size: 14px; }
+        .container { max-width: 840px; margin: 0 auto; }
+        .status-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--green); margin-bottom: 24px; }
+        .status-dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%%; box-shadow: 0 0 8px var(--green); }
+        h1 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 8px; }
+        p.sub { color: var(--muted); margin-bottom: 32px; font-size: 13px; }
+        .section { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 20px; margin-bottom: 24px; }
+        .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 14px; }
+        table { width: 100%%; border-collapse: collapse; font-size: 13px; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+        th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+        td:last-child { text-align: right; }
+        .method { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+        .get { background: #0369a1; color: #fff; }
+        .post { background: #047857; color: #fff; }
+        .grpc { background: #6d28d9; color: #fff; }
+        .code-block { background: #040711; border: 1px solid var(--border); border-radius: 4px; padding: 14px; font-size: 12px; color: #cbd5e1; overflow-x: auto; }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        footer { margin-top: 48px; color: #475569; font-size: 12px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status-badge">
+            <span class="status-dot"></span> Edge Node [%s] Operational &bull; Version %s
+        </div>
+
+        <h1>Distributed Stream & Telemetry Gateway</h1>
+        <p class="sub">High-throughput multi-region ingestion network with bidirectional stream multiplexing.</p>
+
+        <div class="section">
+            <div class="section-title">Regional Ingestion Nodes</div>
+            <table>
+                <thead>
+                    <tr><th>Region</th><th>Identifier</th><th>Protocol</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>EU Central</td><td><code>eu-1</code></td><td>HTTP/2, QUIC, gRPC</td><td><span style="color:var(--green)">Active</span></td></tr>
+                    <tr><td>EU West</td><td><code>eu-2</code></td><td>HTTP/2, QUIC, gRPC</td><td><span style="color:var(--green)">Active</span></td></tr>
+                    <tr><td>AP East</td><td><code>ap-1</code></td><td>HTTP/2, QUIC, gRPC</td><td><span style="color:var(--green)">Active</span></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Protocol Interfaces</div>
+            <table>
+                <thead>
+                    <tr><th>Transport</th><th>Interface</th><th>Route</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><span class="method post">POST</span></td><td>Batch Telemetry</td><td><code>/v1/telemetry/events</code></td></tr>
+                    <tr><td><span class="method post">POST</span></td><td>Binary Stream Push</td><td><code>/v1/ingest/push/{streamKey}</code></td></tr>
+                    <tr><td><span class="method get">GET</span></td><td>WebSocket Duplex</td><td><code>/v1/streams/{streamId}/ws</code></td></tr>
+                    <tr><td><span class="method grpc">gRPC</span></td><td>Multiplexed Stream</td><td><code>/ingest.v1.IngestService/Stream</code></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <div class="section-title">API Specifications</div>
+            <p style="color:var(--muted);font-size:13px">Interactive API schemas and documentation available at <a href="/docs/">/docs/</a> or raw <a href="/docs/openapi.json">OpenAPI Spec (JSON)</a>.</p>
+        </div>
+
+        <footer>
+            Node: %s &bull; Edge Infrastructure Gateway &bull; Auto-negotiated TLS 1.3 / HTTP/2
+        </footer>
+    </div>
+</body>
+</html>`, opts.Region, opts.APIVersion, opts.Domain)
+}
+
+func GenerateSwaggerHTML(opts GeneratorOptions) string {
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ingest API - Documentation</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif; margin: 0; padding: 0; background: #0f172a; color: #f8fafc; }
+        .header { background: #1e293b; border-bottom: 1px solid #334155; padding: 20px 32px; display: flex; justify-content: space-between; align-items: center; }
+        .title { font-size: 20px; font-weight: 700; color: #38bdf8; }
+        .container { max-width: 1000px; margin: 32px auto; padding: 0 20px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+        .ep-header { padding: 16px 20px; display: flex; align-items: center; gap: 12px; font-family: monospace; font-size: 15px; border-bottom: 1px solid #334155; }
+        .method { padding: 4px 10px; border-radius: 4px; font-weight: 700; font-size: 12px; }
+        .get { background: #0284c7; color: #fff; }
+        .post { background: #16a34a; color: #fff; }
+        .grpc { background: #8b5cf6; color: #fff; }
+        .path { font-weight: 600; color: #f8fafc; }
+        .ep-body { padding: 16px 20px; font-size: 14px; color: #94a3b8; }
+        .spec-link { font-size: 13px; color: #38bdf8; text-decoration: none; }
+        .spec-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">Ingest API Specification</div>
+        <div><a class="spec-link" href="/docs/openapi.json">OpenAPI Spec (JSON)</a></div>
+    </div>
+    <div class="container">
+        <div class="card">
+            <div class="ep-header"><span class="method get">GET</span><span class="path">/v1/health</span></div>
+            <div class="ep-body">Edge gateway readiness and health status check. Returns regional availability telemetry.</div>
+        </div>
+        <div class="card">
+            <div class="ep-header"><span class="method post">POST</span><span class="path">/v1/telemetry/events</span></div>
+            <div class="ep-body">Asynchronous batch telemetry and client trace ingestion buffer. Returns 202 Accepted.</div>
+        </div>
+        <div class="card">
+            <div class="ep-header"><span class="method get">GET</span><span class="path">/v1/streams/{streamId}/ws</span></div>
+            <div class="ep-body">Full-duplex low-latency WebSocket live stream channel.</div>
+        </div>
+        <div class="card">
+            <div class="ep-header"><span class="method post">POST</span><span class="path">/v1/ingest/push/{streamKey}</span></div>
+            <div class="ep-body">High-throughput binary streaming pipeline for distributed ingestion. Accepts live stream token.</div>
+        </div>
+        <div class="card">
+            <div class="ep-header"><span class="method grpc">gRPC</span><span class="path">/ingest.v1.IngestService/Stream</span></div>
+            <div class="ep-body">Bidirectional multiplexed HTTP/2 gRPC streaming pipeline.</div>
+        </div>
+    </div>
+</body>
+</html>`
+}
+
+func GenerateOpenAPISpec(opts GeneratorOptions) string {
+	spec := map[string]any{
+		"openapi": "3.0.3",
+		"info": map[string]any{
+			"title":       "Ingest API",
+			"description": "Multi-region low-latency stream ingestion, gRPC streaming, and telemetry gateway.",
+			"version":     opts.APIVersion,
+		},
+		"servers": []map[string]any{
+			{
+				"url":         fmt.Sprintf("https://%s", opts.Domain),
+				"description": fmt.Sprintf("Primary Ingest Node (%s)", opts.Region),
+			},
+		},
+		"paths": map[string]any{
+			"/v1/health": map[string]any{
+				"get": map[string]any{
+					"summary": "Health check",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Service is healthy and ready to accept streams",
+						},
+					},
+				},
+			},
+			"/v1/telemetry/events": map[string]any{
+				"post": map[string]any{
+					"summary":     "Batch telemetry ingest",
+					"description": "Queues client traces and metrics events.",
+					"responses": map[string]any{
+						"202": map[string]any{
+							"description": "Events batch accepted and queued",
+						},
+						"405": map[string]any{
+							"description": "Method Not Allowed - POST required",
+						},
+					},
+				},
+			},
+			"/v1/streams/{streamId}/ws": map[string]any{
+				"get": map[string]any{
+					"summary":     "WebSocket telemetry stream channel",
+					"description": "Establishes long-lived bidirectional streaming socket.",
+					"parameters": []map[string]any{
+						{
+							"name":        "streamId",
+							"in":          "path",
+							"required":    true,
+							"description": "Assigned stream authorization key",
+							"schema": map[string]any{
+								"type":    "string",
+								"pattern": "^live-[a-f0-9]{8}$",
+							},
+						},
+					},
+					"responses": map[string]any{
+						"101": map[string]any{
+							"description": "Switching protocols to WebSocket stream",
+						},
+					},
+				},
+			},
+			"/v1/ingest/push/{streamKey}": map[string]any{
+				"post": map[string]any{
+					"summary":     "Batch event stream push",
+					"description": "Long-lived stream upload channel for high-throughput batch payloads.",
+					"parameters": []map[string]any{
+						{
+							"name":        "streamKey",
+							"in":          "path",
+							"required":    true,
+							"description": "Stream publishing token (e.g. live-a1b2c3d4)",
+							"schema": map[string]any{
+								"type":    "string",
+								"pattern": "^live-[a-f0-9]{8}$",
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Stream buffer acknowledged",
+						},
+					},
+				},
+			},
+			"/ingest.v1.IngestService/Stream": map[string]any{
+				"post": map[string]any{
+					"summary":     "gRPC bidirectional ingestion pipeline",
+					"description": "Multiplexed gRPC protocol buffer channel for high-throughput telemetry frames.",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "gRPC stream status OK",
+						},
+					},
+				},
+			},
+		},
 	}
-	return defaultPOPList[idx.Int64()]
+
+	data, _ := json.MarshalIndent(spec, "", "  ")
+	return string(data)
 }
 
 func write(path string, data []byte, perm os.FileMode) error {
@@ -498,20 +678,4 @@ func write(path string, data []byte, perm os.FileMode) error {
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
-}
-
-func randomHex(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-func randomBase62(n int) string {
-	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, n)
-	for i := range b {
-		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		b[i] = chars[idx.Int64()]
-	}
-	return string(b)
 }

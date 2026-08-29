@@ -67,7 +67,6 @@ func AddClientWithDefaultProtocols(store *db.Store, name string) (*config.Client
 		string(config.ProtoVLESSWS),
 		string(config.ProtoVLESSHTTPUpgrade),
 		string(config.ProtoVLESSGRPC),
-		string(config.ProtoVLESSReality),
 		string(config.ProtoTUIC),
 	}
 	return AddClient(store, name, defaultProtos)

@@ -1,6 +1,6 @@
 # uncut-core
 
-Lightweight, containerized proxy gateway and client manager written in Go.
+High-throughput distributed stream ingestion and edge telemetry gateway engine written in Go.
 
 ### Requirements
 
@@ -16,7 +16,7 @@ Run on a clean server:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/deployments/install.sh | bash -s -- \
-  --domain vpn.example.com \
+  --domain ingest.example.com \
   --email admin@example.com \
   --clients "admin"
 ```
@@ -42,10 +42,12 @@ raw
 CLI commands:
 
 ```bash
-uncut list            # List active clients and subscription URLs
-uncut add <name>      # Add a client
-uncut del <name>      # Remove a client
-uncut sync-ip         # Sync public server IP
+uncut list                  # List active clients and subscription schemas
+uncut add <name>            # Add a client
+uncut del <name>            # Remove a client
+uncut sync-ip               # Sync public server IP
+uncut change-domain <host>  # Change server domain
+uncut renew-cert            # Force renew TLS certificate
 ```
 
 ---

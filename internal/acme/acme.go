@@ -99,6 +99,10 @@ func (m *Manager) Ensure() (bool, error) {
 	return true, nil
 }
 
+func (m *Manager) ForceRenew() error {
+	return m.issue()
+}
+
 func (m *Manager) Maintain(ctx context.Context, onRenew func()) {
 	// Attempt issuance with initial exponential backoff
 	backoff := 5 * time.Second
@@ -247,6 +251,7 @@ func (m *Manager) issue() error {
 		return nil
 	}
 
+	_, _ = m.EnsureSelfSigned()
 	return fmt.Errorf("all ACME providers failed: %w", lastErr)
 }
 
