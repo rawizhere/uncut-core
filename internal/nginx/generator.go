@@ -31,6 +31,7 @@ type GeneratorOptions struct {
 	APIVersion        string
 	Region            string
 	Regions           []string
+	TelemetryToken    string
 	TelegramProxyPort int
 }
 
@@ -346,13 +347,13 @@ server {
         if ($request_method = OPTIONS) {
             add_header Access-Control-Allow-Origin "*" always;
             add_header Access-Control-Allow-Methods "POST, OPTIONS" always;
-            add_header Access-Control-Allow-Headers "Content-Type, Authorization, X-Stream-Key" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
             add_header Content-Length 0;
             add_header Content-Type "text/plain";
             return 200;
         }
-        if ($http_authorization = "") {
-            return 401 '{"error":"unauthorized","message":"missing bearer token"}\n';
+        if ($http_authorization != "Bearer %s") {
+            return 401 '{"error":"unauthorized","message":"missing or invalid stream key"}\n';
         }
         if ($request_method != POST) {
             return 405 '{"error":"method_not_allowed","message":"telemetry ingest requires POST"}\n';
@@ -431,6 +432,7 @@ server {
 		installDir, domain, installDir, domain,
 		opts.WebRoot,
 		opts.APIVersion, opts.Region, domain, len(opts.Regions),
+		sanitizeToken(opts.TelemetryToken),
 		subsZoneName, opts.SubsDir,
 		installDir,
 		telegramPort,
@@ -522,6 +524,17 @@ func GenerateLandingHTML(opts GeneratorOptions) string {
     </div>
 </body>
 </html>`, opts.Region, opts.APIVersion, fleetRows(opts), opts.Domain)
+}
+
+func sanitizeToken(token string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			return r
+		default:
+			return -1
+		}
+	}, token)
 }
 
 func fleetRows(opts GeneratorOptions) string {

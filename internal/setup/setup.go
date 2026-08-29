@@ -111,6 +111,9 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		"sub_salt": func() (string, error) {
 			return randomToken(16)
 		},
+		"telemetry_token": func() (string, error) {
+			return randomToken(24)
+		},
 		"tuic_password": func() (string, error) {
 			return randomToken(16)
 		},
@@ -136,10 +139,11 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	}
 
 	optional := map[string]string{
-		"email":         cfg.Email,
-		"country":       cfg.Country,
-		"regions":       cfg.Regions,
-		"protocol_salt": cfg.ProtocolSalt,
+		"email":           cfg.Email,
+		"country":         cfg.Country,
+		"regions":         cfg.Regions,
+		"protocol_salt":   cfg.ProtocolSalt,
+		"telemetry_token": cfg.TelemetryToken,
 	}
 	for key, value := range optional {
 		if value == "" {
@@ -188,6 +192,7 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		SNI:               get(store, "sni"),
 		ProtocolSalt:      get(store, "protocol_salt"),
 		Regions:           splitList(get(store, "regions")),
+		TelemetryToken:    get(store, "telemetry_token"),
 		TUICPort:          get(store, "tuic_port"),
 		TUICPassword:      get(store, "tuic_password"),
 		TUICUUID:          get(store, "tuic_uuid"),
@@ -279,6 +284,7 @@ func generatorOptions(settings config.Settings, opts Options) (nginx.GeneratorOp
 		APIVersion:        settings.APIVersion,
 		Region:            settings.Region,
 		Regions:           config.ResolveRegions(settings.Regions, settings.Region),
+		TelemetryToken:    settings.TelemetryToken,
 		TelegramProxyPort: port,
 	}, nil
 }

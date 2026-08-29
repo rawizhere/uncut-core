@@ -29,6 +29,7 @@ type AppConfig struct {
 	Region         string `env:"REGION"`
 	Regions        string `env:"REGIONS"`
 	ProtocolSalt   string `env:"PROTOCOL_SALT"`
+	TelemetryToken string `env:"TELEMETRY_TOKEN"`
 	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
 }
 
@@ -156,6 +157,7 @@ type Settings struct {
 	ProtocolSalt      string   `json:"protocol_salt,omitempty"`
 	SubSalt           string   `json:"sub_salt,omitempty"`
 	Regions           []string `json:"regions,omitempty"`
+	TelemetryToken    string   `json:"telemetry_token,omitempty"`
 	InstallDir        string   `json:"install_dir,omitempty"`
 	SubsDir           string   `json:"subs_dir,omitempty"`
 	LogDir            string   `json:"log_dir,omitempty"`

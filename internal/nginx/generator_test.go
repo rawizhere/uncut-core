@@ -116,6 +116,34 @@ func TestGenerateSiteConfig(t *testing.T) {
 	}
 }
 
+func TestTelemetryRequiresStreamKey(t *testing.T) {
+	siteConf := GenerateSiteConfig(GeneratorOptions{
+		Domain:         "ingest-eu-1.example.com",
+		TelemetryToken: "abc123",
+	})
+
+	if !strings.Contains(siteConf, `if ($http_authorization != "Bearer abc123")`) {
+		t.Errorf("telemetry endpoint does not check the stream key")
+	}
+	if !strings.Contains(siteConf, `return 401 '{"error":"unauthorized"`) {
+		t.Errorf("telemetry endpoint does not reject unauthenticated requests")
+	}
+}
+
+func TestTelemetryTokenIsSanitized(t *testing.T) {
+	siteConf := GenerateSiteConfig(GeneratorOptions{
+		Domain:         "ingest-eu-1.example.com",
+		TelemetryToken: `ev"il; injection`,
+	})
+
+	if !strings.Contains(siteConf, `Bearer evilinjection`) {
+		t.Errorf("expected sanitized token in config")
+	}
+	if strings.Contains(siteConf, "injection\";") {
+		t.Errorf("telemetry token leaked unsanitized into config")
+	}
+}
+
 func TestLocationsConfigFallsBackToDefaults(t *testing.T) {
 	locs := GenerateLocationsConfig(GeneratorOptions{
 		Domain:       "ingest-eu-1.example.com",
