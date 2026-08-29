@@ -1,0 +1,39 @@
+services:
+  uncut:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    image: ghcr.io/rawizhere/uncut-core:latest
+    container_name: uncut-core
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      - DATA_DIR=/opt/uncut/data
+      - INSTALL_DIR=/opt/sing-box
+      - TZ=Europe/Moscow
+    volumes:
+      - uncut_data:/opt/uncut/data
+      - uncut_install:/opt/sing-box
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  uncut_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/uncut/data
+  uncut_install:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/uncut/install

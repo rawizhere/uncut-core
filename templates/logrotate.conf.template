@@ -1,8 +1,0 @@
-${LOG_FILE} {
-    daily
-    rotate 3
-    compress
-    missingok
-    notifempty
-    copytruncate
-}

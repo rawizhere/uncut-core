@@ -1,80 +1,80 @@
 # Uncut Core
 
-Raw proxy server manager.
+Next-generation Stealth VPN Engine & Telegram Web Proxy Manager written in Go and containerized with Docker.
 
-Built on sing-box extended.
-Server seamlessly disguises as an AWS CloudFront backend/edge node. Features deep traffic masking, TLS fingerprinting protection, SSL automation, and server hardening (UFW/Fail2ban/Honey Pots).
+Built on Sing-Box Extended and Nginx 1.26+. The server disguises all traffic as an AWS CloudFront CDN / S3 origin edge node with TLS fingerprint masking, Base64 stealth subscriptions, zero-downtime reconfiguration, and Telegram Web Proxy support.
 
-### Screenshots
+---
 
-<img width="1044" height="418" alt="image" src="https://github.com/user-attachments/assets/1582eda2-84bd-4e73-9e68-993be86bdb84" />
+### Features
+
+- **Multi-protocol Stealth Stack**: XHTTP Stealth, VLESS WebSocket, VLESS HTTPUpgrade, VLESS gRPC, VLESS Reality (:8443) and TUIC v5 (:443 UDP).
+- **Telegram Web Proxy**: Integrated WebSocket/HTTPS bridge with direct in-app connection links.
+- **Embedded SQLite Storage**: Transactional `uncut.db` with auto-initialized settings and client state.
+- **Structured JSON Logging**: Native `log/slog` output in Moscow timezone (`Europe/Moscow`).
+- **Automated Host Optimization**: BBR congestion control, 2GB Swap auto-provisioning, NTP synchronization, and strict UFW firewall.
+
+---
 
 ### Requirements
 
-- Ubuntu 20.04+ / Debian 11+
+- Linux (Ubuntu 22.04+ / Debian 12+)
 - Root access
-- Subdomain
-- SNI address
+- A registered domain or subdomain pointed to server IP
+- Open inbound ports: `80/tcp` (ACME), `443/tcp` (stealth HTTPS), `443/udp` (TUIC), `8443/tcp` (Reality)
 
-### Install
+---
 
-Interactive:
+### Quick Installation
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash
-```
-
-Unattended:
+Run the one-line installer on a clean server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- --domain domain.com --email email@site.com --country DE --sni dl.google.com --protocols default --ssh-port 1488 --clients "user1,user2"
+curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/bootstrap.sh | bash -s -- \
+  --domain raw.example.com \
+  --email admin@example.com \
+  --clients "alice,bob"
 ```
 
-### Update
-
-Direct CLI update:
-
-```bash
-raw update
-```
-
-Via installer:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/install.sh | bash -s -- update
-```
+---
 
 ### Flags
 
-| Flag | Description | Default |
-| --- | --- | --- |
-| `--domain` | Target domain or subdomain | Required |
-| `--email` | Email for ACME SSL certificates | Required |
-| `--country` | Two-letter country code for node links | `US` |
-| `--sni` | SNI domain address for TLS masking | `dl.google.com` |
-| `--protocols` | Protocol selection | `default` |
-| `--ssh-port` | Custom SSH listening port | `22` |
-| `--clients` | Comma-separated list of client names | Optional |
-| `--auto` | Run in non-interactive mode | `false` |
-| `--update`, `update`, `-u` | Run update mode | `false` |
+| Flag | Short | Description | Default |
+| --- | --- | --- | --- |
+| `--domain` | `-d` | Target domain or subdomain | **Required** |
+| `--email` | `-m` | Email for Let's Encrypt SSL certificates | Optional |
+| `--clients` | `-c` | Comma-separated list of initial clients | `default` |
 
-### Usage
+---
+
+### CLI Management
+
+Run commands inside the container or on the host:
 
 ```bash
-raw        # Open interactive menu
-raw update # Quick core update
+uncut menu           # Interactive terminal management console
+uncut add alice      # Add new client and output subscription
+uncut del alice      # Delete client and invalidate subscription
+uncut list           # List all active clients and .bin URLs
+uncut sync-ip        # Force public IPv4 synchronization
+uncut daemon         # Run supervisor daemon (PID 1)
 ```
 
-### Tree
+---
 
-```text
-.
-├── core/        # Logic
-├── modules/     # Acme, Nginx, Engine
-├── templates/   # Configs
-├── raw          # Entry point
-└── install.sh   # Installer
+### Local Development & Testing
+
+```bash
+# Clone repository
+git clone https://github.com/rawizhere/uncut-core.git
+cd uncut-core
+
+# Run unit tests and linters
+go test -v ./...
+golangci-lint run ./...
+
+# Run local development container
+cd deployments
+docker compose -f docker-compose.dev.yml up --build
 ```
-
-
-

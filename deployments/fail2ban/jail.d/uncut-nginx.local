@@ -1,0 +1,17 @@
+[uncut-honeypot]
+enabled = true
+port = http,https,8443
+filter = uncut-honeypot
+logpath = /opt/uncut/data/logs/nginx/access.log
+maxretry = 1
+bantime = 86400
+findtime = 600
+
+[uncut-dos]
+enabled = true
+port = http,https,8443
+filter = nginx-limit-req
+logpath = /opt/uncut/data/logs/nginx/error.log
+maxretry = 10
+bantime = 3600
+findtime = 60

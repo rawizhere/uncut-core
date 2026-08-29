@@ -1,0 +1,30 @@
+name: uncut-dev
+
+services:
+  uncut:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile
+    container_name: uncut-dev
+    restart: unless-stopped
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"
+      - "8443:8443/tcp"
+    environment:
+      - DOMAIN=${DOMAIN:-dev.example.com}
+      - DATA_DIR=/opt/uncut/data
+      - INSTALL_DIR=/opt/sing-box
+      - TZ=Europe/Moscow
+      - LOG_LEVEL=debug
+    volumes:
+      - ./dev_data:/opt/uncut/data
+      - ./dev_install:/opt/sing-box
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
