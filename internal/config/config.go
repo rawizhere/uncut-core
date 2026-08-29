@@ -14,7 +14,7 @@ import (
 type AppConfig struct {
 	Domain         string `env:"DOMAIN"`
 	Email          string `env:"EMAIL"`
-	Country        string `env:"COUNTRY" envDefault:"US"`
+	Country        string `env:"COUNTRY" envDefault:"DE"`
 	Timezone       string `env:"TZ" envDefault:"Europe/Moscow"`
 	DataDir        string `env:"DATA_DIR" envDefault:"/opt/uncut/data"`
 	InstallDir     string `env:"INSTALL_DIR" envDefault:"/opt/sing-box"`
@@ -27,6 +27,8 @@ type AppConfig struct {
 	Clients        string `env:"CLIENTS"`
 	APIVersion     string `env:"API_VERSION"`
 	Region         string `env:"REGION"`
+	Regions        string `env:"REGIONS"`
+	ProtocolSalt   string `env:"PROTOCOL_SALT"`
 	LogLevel       string `env:"LOG_LEVEL" envDefault:"info"`
 }
 
@@ -88,6 +90,46 @@ func IsValidProtocol(p string) bool {
 	return false
 }
 
+func ResolveProtocols(raw []string) []string {
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, p := range raw {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] || !IsValidProtocol(p) {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	if len(out) > 0 {
+		return out
+	}
+	for _, p := range DefaultProtocols {
+		out = append(out, string(p))
+	}
+	return out
+}
+
+func ResolveRegions(raw []string, fallback string) []string {
+	seen := make(map[string]bool, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, r := range raw {
+		r = strings.TrimSpace(r)
+		if r == "" || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	if len(out) > 0 {
+		return out
+	}
+	if fallback != "" {
+		return []string{fallback}
+	}
+	return []string{DefaultRegion}
+}
+
 type Client struct {
 	UUID      string    `json:"uuid"`
 	Name      string    `json:"name"`
@@ -113,6 +155,7 @@ type Settings struct {
 	SNI               string   `json:"sni,omitempty"`
 	ProtocolSalt      string   `json:"protocol_salt,omitempty"`
 	SubSalt           string   `json:"sub_salt,omitempty"`
+	Regions           []string `json:"regions,omitempty"`
 	InstallDir        string   `json:"install_dir,omitempty"`
 	SubsDir           string   `json:"subs_dir,omitempty"`
 	LogDir            string   `json:"log_dir,omitempty"`
@@ -121,7 +164,6 @@ type Settings struct {
 	TelegramProxyPort string   `json:"telegram_proxy_port,omitempty"`
 	APIVersion        string   `json:"api_version,omitempty"`
 	Region            string   `json:"region,omitempty"`
-	HealthUptime      string   `json:"health_uptime,omitempty"`
 	DPIFragment       string   `json:"dpi_fragment,omitempty"`
 	DPIPadding        string   `json:"dpi_padding,omitempty"`
 }
@@ -129,11 +171,14 @@ type Settings struct {
 const (
 	DefaultDomain            = "ingest-eu-1.example.com"
 	DefaultSNI               = "dl.google.com"
+	DefaultRegion            = "eu-1"
 	DefaultTUICPort          = "443"
 	DefaultTelegramProxyPort = "8080"
 	DefaultSubsDir           = "/var/www/cdn/subs"
 	DefaultWebRoot           = "/var/www/html"
 )
+
+var DefaultRegions = []string{"eu-1", "eu-2", "eu-3"}
 
 var mskLocation = time.FixedZone("MSK", 3*60*60)
 

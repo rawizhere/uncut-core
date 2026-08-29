@@ -28,15 +28,8 @@ type OutboundConfig struct {
 
 func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, error) {
 	inbounds := make([]map[string]any, 0)
-	activeProtos := settings.Protocols
-	if len(activeProtos) == 0 {
-		activeProtos = make([]string, len(config.DefaultProtocols))
-		for i, p := range config.DefaultProtocols {
-			activeProtos[i] = string(p)
-		}
-	}
 
-	for _, proto := range activeProtos {
+	for _, proto := range config.ResolveProtocols(settings.Protocols) {
 		inbound, err := generateInbound(proto, settings, clients)
 		if err != nil {
 			return nil, fmt.Errorf("generate inbound for %s: %w", proto, err)

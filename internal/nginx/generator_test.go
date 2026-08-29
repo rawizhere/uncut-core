@@ -43,8 +43,8 @@ func TestGenerateLocationsConfig(t *testing.T) {
 
 	locs := GenerateLocationsConfig(opts)
 
-	if !strings.Contains(locs, "location /v1/ingest/push/live-a1b2c3d4") {
-		t.Errorf("Missing location /v1/ingest/push/live-a1b2c3d4")
+	if !strings.Contains(locs, "location ^~ /v1/ingest/push/live-a1b2c3d4") {
+		t.Errorf("Missing location ^~ /v1/ingest/push/live-a1b2c3d4")
 	}
 	if !strings.Contains(locs, "proxy_pass http://127.0.0.1:10002;") {
 		t.Errorf("Missing proxy_pass 10002 for xhttp")
@@ -78,7 +78,7 @@ func TestGenerateSiteConfig(t *testing.T) {
 		InstallDir:        "/opt/sing-box",
 		APIVersion:        "2.4.1",
 		Region:            "eu-1",
-		HealthUptime:      "4912",
+		Regions:           []string{"eu-1", "eu-2", "eu-3"},
 		TelegramProxyPort: 8080,
 	}
 
@@ -93,11 +93,11 @@ func TestGenerateSiteConfig(t *testing.T) {
 	if !strings.Contains(siteConf, "add_header X-Request-Id $request_id always;") {
 		t.Errorf("Site config missing X-Request-Id header")
 	}
-	if !strings.Contains(siteConf, "add_header X-Ingest-Region \"eu-1\" always;") {
-		t.Errorf("Site config missing X-Ingest-Region header")
+	if strings.Contains(siteConf, "X-Ingest-Region") || strings.Contains(siteConf, "X-Ingest-Node") {
+		t.Errorf("Site config still exposes node identity headers")
 	}
-	if !strings.Contains(siteConf, "add_header X-Ingest-Node \"ingest-eu-1.example.com\" always;") {
-		t.Errorf("Site config missing X-Ingest-Node header")
+	if !strings.Contains(siteConf, `"healthy_nodes":3`) {
+		t.Errorf("Site config missing healthy_nodes from fleet size")
 	}
 	if !strings.Contains(siteConf, "location = /v1/telemetry/events") {
 		t.Errorf("Site config missing /v1/telemetry/events location")
@@ -114,4 +114,54 @@ func TestGenerateSiteConfig(t *testing.T) {
 	if !strings.Contains(siteConf, "/v1/schemas/([a-f0-9]{32})\\.bin$") {
 		t.Errorf("Site config missing /v1/schemas subscription location")
 	}
+}
+
+func TestLocationsConfigFallsBackToDefaults(t *testing.T) {
+	locs := GenerateLocationsConfig(GeneratorOptions{
+		Domain:       "ingest-eu-1.example.com",
+		ProtocolSalt: "a1b2c3d4",
+	})
+
+	for _, want := range []string{
+		"location ^~ /v1/ingest/push/live-a1b2c3d4",
+		"location = /v1/streams/live-a1b2c3d4/ws",
+		"location = /v1/streams/live-a1b2c3d4/upgrade",
+		"location /ingest.v1.IngestService/",
+	} {
+		if !strings.Contains(locs, want) {
+			t.Errorf("Default protocol set missing %s", want)
+		}
+	}
+}
+
+func TestSiteConfigServesStaticFiles(t *testing.T) {
+	siteConf := GenerateSiteConfig(GeneratorOptions{Domain: "ingest-eu-1.example.com"})
+
+	block := tlsLocation(siteConf, "    location / {\n")
+	if block == "" {
+		t.Fatalf("catch-all location / not found in tls server")
+	}
+	if !strings.Contains(block, "try_files $uri $uri/ @not_found;") {
+		t.Errorf("catch-all does not serve static files")
+	}
+	if strings.Contains(block, "return 404;") {
+		t.Errorf("catch-all still returns 404 for static files")
+	}
+}
+
+func tlsLocation(conf, header string) string {
+	start := strings.Index(conf, "    listen 443 ssl http2;")
+	if start < 0 {
+		return ""
+	}
+	conf = conf[start:]
+	start = strings.Index(conf, header)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(conf[start:], "\n    }")
+	if end < 0 {
+		return ""
+	}
+	return conf[start : start+end]
 }

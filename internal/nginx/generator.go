@@ -1,19 +1,23 @@
 package nginx
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/renameio/v2"
 	"github.com/rawizhere/uncut-core/internal/config"
 )
 
 const (
-	subsZoneName = "anti_subs"
-	subsRate     = "10r/s"
+	subsZoneName   = "anti_subs"
+	subsRate       = "10r/s"
+	ingestZoneName = "anti_ingest"
+	ingestRate     = "5r/s"
 )
 
 type GeneratorOptions struct {
@@ -26,7 +30,7 @@ type GeneratorOptions struct {
 	ActiveProtocols   []string
 	APIVersion        string
 	Region            string
-	HealthUptime      string
+	Regions           []string
 	TelegramProxyPort int
 }
 
@@ -57,10 +61,10 @@ func (opts *GeneratorOptions) normalize() {
 		opts.APIVersion = "2.4.1"
 	}
 	if opts.Region == "" {
-		opts.Region = "eu-1"
+		opts.Region = config.DefaultRegion
 	}
-	if opts.HealthUptime == "" {
-		opts.HealthUptime = "4912"
+	if len(opts.Regions) == 0 {
+		opts.Regions = []string{opts.Region}
 	}
 	if opts.TelegramProxyPort <= 0 {
 		opts.TelegramProxyPort = 8080
@@ -108,20 +112,22 @@ func WriteFiles(opts GeneratorOptions, paths Paths) error {
 		return err
 	}
 
-	if err := write(filepath.Join(opts.WebRoot, "index.html"), []byte(GenerateLandingHTML(opts)), 0o644); err != nil {
-		return err
+	published := publishedAt(opts.Domain)
+
+	assets := map[string]string{
+		filepath.Join(opts.WebRoot, "index.html"):  GenerateLandingHTML(opts),
+		filepath.Join(opts.WebRoot, "favicon.svg"): GenerateFaviconSVG(),
+		filepath.Join(opts.WebRoot, "robots.txt"):  "User-agent: *\nDisallow: /docs/\n",
+		filepath.Join(docsDir, "openapi.json"):     GenerateOpenAPISpec(opts),
+		filepath.Join(docsDir, "index.html"):       GenerateSwaggerHTML(opts),
 	}
-	if err := write(filepath.Join(opts.WebRoot, "favicon.ico"), []byte(GenerateFaviconSVG()), 0o644); err != nil {
-		return err
-	}
-	if err := write(filepath.Join(opts.WebRoot, "robots.txt"), []byte("User-agent: *\nDisallow: /docs/\n"), 0o644); err != nil {
-		return err
-	}
-	if err := write(filepath.Join(docsDir, "openapi.json"), []byte(GenerateOpenAPISpec(opts)), 0o644); err != nil {
-		return err
-	}
-	if err := write(filepath.Join(docsDir, "index.html"), []byte(GenerateSwaggerHTML(opts)), 0o644); err != nil {
-		return err
+	for path, body := range assets {
+		if err := write(path, []byte(body), 0o644); err != nil {
+			return err
+		}
+		if err := os.Chtimes(path, published, published); err != nil {
+			return fmt.Errorf("backdate %s: %w", path, err)
+		}
 	}
 
 	if filepath.Dir(paths.SiteFile) != paths.IncludeDir {
@@ -130,15 +136,23 @@ func WriteFiles(opts GeneratorOptions, paths Paths) error {
 	return nil
 }
 
+func publishedAt(domain string) time.Time {
+	sum := sha256.Sum256([]byte(domain))
+	days := 20 + int(sum[0])%90
+	return time.Now().AddDate(0, 0, -days)
+}
+
 func writeLimits(path string) error {
-	zone := fmt.Sprintf("limit_req_zone $binary_remote_addr zone=%s:10m rate=%s;", subsZoneName, subsRate)
+	body := fmt.Sprintf("limit_req_zone $binary_remote_addr zone=%s:10m rate=%s;\nlimit_req_zone $binary_remote_addr zone=%s:10m rate=%s;\n",
+		subsZoneName, subsRate, ingestZoneName, ingestRate)
 
 	if existing, err := os.ReadFile(path); err == nil {
-		if strings.Contains(string(existing), "zone="+subsZoneName) {
+		if strings.Contains(string(existing), "zone="+subsZoneName) &&
+			strings.Contains(string(existing), "zone="+ingestZoneName) {
 			return nil
 		}
 	}
-	return write(path, []byte(zone+"\n"), 0o644)
+	return write(path, []byte(body), 0o644)
 }
 
 func linkSiteFile(paths Paths) error {
@@ -154,8 +168,8 @@ func linkSiteFile(paths Paths) error {
 
 func GenerateLocationsConfig(opts GeneratorOptions) string {
 	opts.normalize()
-	active := make(map[string]bool)
-	for _, p := range opts.ActiveProtocols {
+	active := make(map[string]bool, len(opts.ActiveProtocols))
+	for _, p := range config.ResolveProtocols(opts.ActiveProtocols) {
 		active[strings.TrimSpace(p)] = true
 	}
 
@@ -164,7 +178,7 @@ func GenerateLocationsConfig(opts GeneratorOptions) string {
 
 	if active[string(config.ProtoXHTTPStealth)] {
 		xhttpPath := fmt.Sprintf("/v1/ingest/push/live-%s", salt)
-		fmt.Fprintf(&sb, "    location %s {\n", xhttpPath)
+		fmt.Fprintf(&sb, "    location ^~ %s {\n", xhttpPath)
 		sb.WriteString("        proxy_pass http://127.0.0.1:10002;\n")
 		sb.WriteString("        proxy_http_version 1.1;\n")
 		sb.WriteString("        proxy_buffering off;\n")
@@ -294,8 +308,7 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Request-Id $request_id always;
-    add_header X-Ingest-Region "%s" always;
-    add_header X-Ingest-Node "%s" always;
+    add_header Alt-Svc 'h3=":443"; ma=86400' always;
 
     root %s;
     index index.html;
@@ -308,17 +321,17 @@ server {
     proxy_buffers 8 64k;
     proxy_buffer_size 128k;
     client_body_buffer_size 512k;
-    client_max_body_size 0;
+    client_max_body_size 1m;
 
-    location = /favicon.ico {
+    location = /favicon.svg {
         log_not_found off;
         access_log off;
-        try_files /favicon.ico =204;
+        try_files /favicon.svg =204;
     }
 
     location = /v1/health {
         default_type application/json;
-        return 200 '{"status":"healthy","version":"%s","region":"%s","node_id":"%s","timestamp":"$time_iso8601","healthy_nodes":3}\n';
+        return 200 '{"status":"healthy","version":"%s","region":"%s","node_id":"%s","timestamp":"$time_iso8601","healthy_nodes":%d}\n';
     }
 
     location = /healthz {
@@ -327,6 +340,8 @@ server {
     }
 
     location = /v1/telemetry/events {
+        client_max_body_size 64k;
+        limit_req zone=anti_ingest burst=10 nodelay;
         default_type application/json;
         if ($request_method = OPTIONS) {
             add_header Access-Control-Allow-Origin "*" always;
@@ -335,6 +350,9 @@ server {
             add_header Content-Length 0;
             add_header Content-Type "text/plain";
             return 200;
+        }
+        if ($http_authorization = "") {
+            return 401 '{"error":"unauthorized","message":"missing bearer token"}\n';
         }
         if ($request_method != POST) {
             return 405 '{"error":"method_not_allowed","message":"telemetry ingest requires POST"}\n';
@@ -402,7 +420,7 @@ server {
             return 200;
         }
 
-        return 404;
+        try_files $uri $uri/ @not_found;
     }
 }
 `,
@@ -411,9 +429,8 @@ server {
 		domain,
 		opts.LogDir, opts.LogDir,
 		installDir, domain, installDir, domain,
-		opts.Region, domain,
 		opts.WebRoot,
-		opts.APIVersion, opts.Region, domain,
+		opts.APIVersion, opts.Region, domain, len(opts.Regions),
 		subsZoneName, opts.SubsDir,
 		installDir,
 		telegramPort,
@@ -432,7 +449,7 @@ func GenerateLandingHTML(opts GeneratorOptions) string {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Distributed Ingestion Network</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <style>
         :root { --bg: #090d16; --surface: #111827; --border: #1f293d; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --green: #10b981; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -468,15 +485,13 @@ func GenerateLandingHTML(opts GeneratorOptions) string {
         <p class="sub">High-throughput multi-region ingestion network with bidirectional stream multiplexing.</p>
 
         <div class="section">
-            <div class="section-title">Regional Ingestion Nodes</div>
+            <div class="section-title">Ingestion Fleet</div>
             <table>
                 <thead>
-                    <tr><th>Region</th><th>Identifier</th><th>Protocol</th><th>Status</th></tr>
+                    <tr><th>Region</th><th>Transports</th><th>Status</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td>EU Central</td><td><code>eu-1</code></td><td>HTTP/2, QUIC, gRPC</td><td><span style="color:var(--green)">Active</span></td></tr>
-                    <tr><td>EU West</td><td><code>eu-2</code></td><td>HTTP/2, QUIC, gRPC</td><td><span style="color:var(--green)">Active</span></td></tr>
-                    <tr><td>AP East</td><td><code>ap-1</code></td><td>HTTP/2, QUIC, gRPC</td><td><span style="color:var(--green)">Active</span></td></tr>
+%s
                 </tbody>
             </table>
         </div>
@@ -506,7 +521,15 @@ func GenerateLandingHTML(opts GeneratorOptions) string {
         </footer>
     </div>
 </body>
-</html>`, opts.Region, opts.APIVersion, opts.Domain)
+</html>`, opts.Region, opts.APIVersion, fleetRows(opts), opts.Domain)
+}
+
+func fleetRows(opts GeneratorOptions) string {
+	var sb strings.Builder
+	for _, region := range opts.Regions {
+		fmt.Fprintf(&sb, "                    <tr><td>%s</td><td>HTTP/2, QUIC, gRPC</td><td><span style=\"color:var(--green)\">Active</span></td></tr>\n", region)
+	}
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
 func GenerateSwaggerHTML(opts GeneratorOptions) string {
@@ -516,7 +539,7 @@ func GenerateSwaggerHTML(opts GeneratorOptions) string {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ingest API - Documentation</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif; margin: 0; padding: 0; background: #0f172a; color: #f8fafc; }
         .header { background: #1e293b; border-bottom: 1px solid #334155; padding: 20px 32px; display: flex; justify-content: space-between; align-items: center; }

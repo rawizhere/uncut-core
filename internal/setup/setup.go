@@ -89,7 +89,6 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		"protocol_salt": func() (string, error) { return randomHex(4) },
 		"api_version":   func() (string, error) { return randomAPIVersion(cfg.APIVersion), nil },
 		"region":        func() (string, error) { return determineRegion(cfg.Region, store), nil },
-		"health_uptime": func() (string, error) { return randomHealthUptime(), nil },
 		"mtproto_raw_secret": func() (string, error) {
 			return randomHex(16)
 		},
@@ -129,6 +128,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		"tuic_port":           config.DefaultTUICPort,
 		"telegram_proxy_port": config.DefaultTelegramProxyPort,
 		"protocols":           strings.Join(stringProtocols(config.DefaultProtocols), ","),
+		"regions":             strings.Join(config.DefaultRegions, ","),
 	} {
 		if _, err := setting(store, key, fallback); err != nil {
 			return config.Settings{}, err
@@ -136,8 +136,10 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	}
 
 	optional := map[string]string{
-		"email":   cfg.Email,
-		"country": cfg.Country,
+		"email":         cfg.Email,
+		"country":       cfg.Country,
+		"regions":       cfg.Regions,
+		"protocol_salt": cfg.ProtocolSalt,
 	}
 	for key, value := range optional {
 		if value == "" {
@@ -185,6 +187,7 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		RealityServerName: get(store, "reality_server_name"),
 		SNI:               get(store, "sni"),
 		ProtocolSalt:      get(store, "protocol_salt"),
+		Regions:           splitList(get(store, "regions")),
 		TUICPort:          get(store, "tuic_port"),
 		TUICPassword:      get(store, "tuic_password"),
 		TUICUUID:          get(store, "tuic_uuid"),
@@ -193,7 +196,6 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		TelegramProxyPort: get(store, "telegram_proxy_port"),
 		APIVersion:        get(store, "api_version"),
 		Region:            get(store, "region"),
-		HealthUptime:      get(store, "health_uptime"),
 		DPIFragment:       get(store, "dpi_fragment"),
 		DPIPadding:        get(store, "dpi_padding"),
 	}
@@ -276,7 +278,7 @@ func generatorOptions(settings config.Settings, opts Options) (nginx.GeneratorOp
 		ActiveProtocols:   settings.Protocols,
 		APIVersion:        settings.APIVersion,
 		Region:            settings.Region,
-		HealthUptime:      settings.HealthUptime,
+		Regions:           config.ResolveRegions(settings.Regions, settings.Region),
 		TelegramProxyPort: port,
 	}, nil
 }
@@ -295,25 +297,13 @@ func determineRegion(preferred string, store *db.Store) string {
 		return preferred
 	}
 	domain := get(store, "domain")
-	switch {
-	case strings.Contains(domain, "eu-1"):
-		return "eu-1"
-	case strings.Contains(domain, "eu-2"):
-		return "eu-2"
-	case strings.Contains(domain, "ap-1"):
-		return "ap-1"
-	case strings.Contains(domain, "us-1"):
-		return "us-1"
-	default:
-		regions := []string{"eu-1", "eu-2", "ap-1"}
-		idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(regions))))
-		return regions[idx.Int64()]
+	for _, region := range config.DefaultRegions {
+		if strings.Contains(domain, region) {
+			return region
+		}
 	}
-}
-
-func randomHealthUptime() string {
-	n, _ := rand.Int(rand.Reader, big.NewInt(7200))
-	return strconv.Itoa(int(n.Int64()) + 1800)
+	idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(config.DefaultRegions))))
+	return config.DefaultRegions[idx.Int64()]
 }
 
 func ensureRealityKeys(store *db.Store) error {

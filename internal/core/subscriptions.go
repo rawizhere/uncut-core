@@ -28,16 +28,7 @@ func getRegion(s config.Settings) string {
 	if s.Region != "" {
 		return s.Region
 	}
-	if strings.Contains(s.Domain, "eu-1") {
-		return "eu-1"
-	}
-	if strings.Contains(s.Domain, "eu-2") {
-		return "eu-2"
-	}
-	if strings.Contains(s.Domain, "ap-1") {
-		return "ap-1"
-	}
-	return "eu-1"
+	return config.DefaultRegion
 }
 
 func GenerateVLESSRealityLink(client config.Client, s config.Settings) string {
@@ -130,13 +121,7 @@ func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
 }
 
 func GenerateClientLinks(client config.Client, s config.Settings) []string {
-	activeServerProtos := s.Protocols
-	if len(activeServerProtos) == 0 {
-		activeServerProtos = make([]string, len(config.DefaultProtocols))
-		for i, p := range config.DefaultProtocols {
-			activeServerProtos[i] = string(p)
-		}
-	}
+	activeServerProtos := config.ResolveProtocols(s.Protocols)
 
 	serverProtoMap := make(map[string]bool)
 	for _, p := range activeServerProtos {
