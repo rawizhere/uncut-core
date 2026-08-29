@@ -151,16 +151,3 @@ func InstallSingboxVersion(ctx context.Context, version string, targetPath strin
 	slog.Info("Sing-Box binary updated successfully", "version", version, "path", targetPath)
 	return nil
 }
-
-func GetCurrentSingboxVersion() string {
-	cmd := exec.Command("sing-box", "version")
-	out, err := cmd.Output()
-	if err != nil {
-		return "unknown"
-	}
-	lines := strings.Split(string(out), "\n")
-	if len(lines) > 0 {
-		return strings.TrimSpace(lines[0])
-	}
-	return "unknown"
-}

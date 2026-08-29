@@ -65,22 +65,34 @@ func TestClientLifecycle(t *testing.T) {
 	}
 
 	// List
-	list, err := ListClients(store)
+	list, err := store.GetClients()
 	if err != nil {
-		t.Fatalf("ListClients failed: %v", err)
+		t.Fatalf("GetClients failed: %v", err)
 	}
 	if len(list) != 1 {
 		t.Errorf("Expected 1 client, got %d", len(list))
 	}
 
-	// Delete
-	if err := DeleteClient(store, client.UUID); err != nil {
-		t.Fatalf("DeleteClient failed: %v", err)
+	// Delete drops the subscription file along with the record
+	subsDir := filepath.Join(tmpDir, "subs")
+	if err := os.MkdirAll(subsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	subFile := filepath.Join(subsDir, client.SubHash)
+	if err := os.WriteFile(subFile, []byte("payload"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
 	}
 
-	listAfter, err := ListClients(store)
+	if err := DeleteClient(store, subsDir, client.UUID); err != nil {
+		t.Fatalf("DeleteClient failed: %v", err)
+	}
+	if _, err := os.Stat(subFile); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Subscription file left behind after delete: %v", err)
+	}
+
+	listAfter, err := store.GetClients()
 	if err != nil {
-		t.Fatalf("ListClients after delete failed: %v", err)
+		t.Fatalf("GetClients after delete failed: %v", err)
 	}
 	if len(listAfter) != 0 {
 		t.Errorf("Expected 0 clients, got %d", len(listAfter))

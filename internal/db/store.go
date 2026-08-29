@@ -143,28 +143,6 @@ func (s *Store) GetClientByUUID(uuid string) (*config.Client, error) {
 	return &c, nil
 }
 
-func (s *Store) GetClientByHash(hash string) (*config.Client, error) {
-	query := `SELECT uuid, name, password, sub_hash, protocols, created_at FROM clients WHERE sub_hash = ?`
-	var c config.Client
-	var protosJSON string
-	var createdAt any
-
-	err := s.db.QueryRow(query, hash).Scan(&c.UUID, &c.Name, &c.Password, &c.SubHash, &protosJSON, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-
-	if protosJSON != "" {
-		_ = json.Unmarshal([]byte(protosJSON), &c.Protocols)
-	}
-	if c.Protocols == nil {
-		c.Protocols = []string{}
-	}
-	c.CreatedAt = parseTime(createdAt)
-
-	return &c, nil
-}
-
 func (s *Store) AddClient(client config.Client) error {
 	if client.CreatedAt.IsZero() {
 		client.CreatedAt = config.GetMSKTime()

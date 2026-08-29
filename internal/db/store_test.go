@@ -70,14 +70,6 @@ func TestStoreOperations(t *testing.T) {
 		t.Fatalf("unexpected client by UUID: %+v", byUUID)
 	}
 
-	byHash, err := store.GetClientByHash(client.SubHash)
-	if err != nil {
-		t.Fatalf("GetClientByHash failed: %v", err)
-	}
-	if byHash == nil || byHash.UUID != client.UUID {
-		t.Fatalf("unexpected client by Hash: %+v", byHash)
-	}
-
 	if err := store.DeleteClient(client.UUID); err != nil {
 		t.Fatalf("DeleteClient failed: %v", err)
 	}

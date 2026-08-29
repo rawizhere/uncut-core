@@ -315,11 +315,11 @@ func delClientCmd() *cobra.Command {
 				return fmt.Errorf("client %s not found", name)
 			}
 
-			if err := store.DeleteClient(targetUUID); err != nil {
+			opts := setup.DefaultOptions(dataDir, installDir)
+			if err := core.DeleteClient(store, opts.SubsDir, targetUUID); err != nil {
 				return err
 			}
 
-			opts := setup.DefaultOptions(dataDir, installDir)
 			if err := setup.RebuildAll(cmd.Context(), store, nil, opts); err != nil {
 				return fmt.Errorf("rebuild configs: %w", err)
 			}

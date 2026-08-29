@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -117,7 +119,7 @@ func AddClient(store *db.Store, name string, protocols []string) (*config.Client
 	return &client, nil
 }
 
-func DeleteClient(store *db.Store, clientUUID string) error {
+func DeleteClient(store *db.Store, subsDir, clientUUID string) error {
 	client, err := store.GetClientByUUID(clientUUID)
 	if err != nil {
 		return fmt.Errorf("client not found: %w", err)
@@ -125,6 +127,12 @@ func DeleteClient(store *db.Store, clientUUID string) error {
 
 	if err := store.DeleteClient(clientUUID); err != nil {
 		return fmt.Errorf("delete client: %w", err)
+	}
+
+	if subsDir != "" && client.SubHash != "" {
+		if err := os.Remove(filepath.Join(subsDir, client.SubHash)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("Failed to remove subscription file", "uuid", clientUUID, "error", err)
+		}
 	}
 
 	slog.Info("Client deleted", "name", client.Name, "uuid", clientUUID)
@@ -152,12 +160,4 @@ func UpdateClientProtocols(store *db.Store, clientUUID string, protocols []strin
 
 	slog.Info("Client protocols updated", "name", client.Name, "uuid", clientUUID, "protocols", sanitizedProtos)
 	return client, nil
-}
-
-func GetClient(store *db.Store, clientUUID string) (*config.Client, error) {
-	return store.GetClientByUUID(clientUUID)
-}
-
-func ListClients(store *db.Store) ([]config.Client, error) {
-	return store.GetClients()
 }

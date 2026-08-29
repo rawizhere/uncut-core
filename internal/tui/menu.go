@@ -197,7 +197,12 @@ func (m *Menu) delClient(ctx context.Context) {
 		return
 	}
 
-	_ = m.store.DeleteClient(targetUUID)
+	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
+	if err := core.DeleteClient(m.store, opts.SubsDir, targetUUID); err != nil {
+		fmt.Printf("\nError deleting client: %v\n", err)
+		return
+	}
+
 	m.rebuildAndReload(ctx)
 	fmt.Println("\nClient deleted successfully.")
 }
