@@ -1,14 +1,45 @@
-.DS_Store
-.vscode/
-.idea/
-*.log
-*.tmp
-*.swp
-.agent/
-docs/
+# Go binaries and build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+/uncut
+/sing-box
+bin/
+dist/
+vendor/
 
-# Local testing artifacts (if any)
+# Test & coverage
+coverage.out
+coverage.html
+
+# Database & Runtime
+*.db
+*.db-journal
+*.db-wal
+uncut.db
 config.json
 settings.json
 clients.json
-sing-box
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+deployments/.env
+deployments/dev_data/
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs & temp
+*.log
+*.tmp
+*.swp
+logs/
+/tmp/
