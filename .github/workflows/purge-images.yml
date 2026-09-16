@@ -10,6 +10,8 @@ permissions:
 jobs:
   purge:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -18,23 +20,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: List and remove all versions except latest
+      - name: Remove all tags except latest
         run: |
-          # Get all tags
-          MANIFEST_LIST=$(skopeo inspect docker://ghcr.io/rawizhere/uncut-core:latest)
-          LATEST_DIGEST=$(echo "$MANIFEST_LIST" | jq -r '.Digest')
-          echo "Latest digest: $LATEST_DIGEST"
+          # Get all tags via skopeo inspect
+          TAGS=$(skopeo inspect docker://ghcr.io/rawizhere/uncut-core:latest 2>/dev/null || true)
 
-          # Get all package versions via API
-          VERSIONS=$(gh api             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "/users/${{ github.actor }}/packages/container/uncut-core/versions"             --jq ".[] | {id: .id, name: .name}")
+          # Get package versions via GitHub API - using repo-level endpoint
+          echo "Fetching package versions..."
+          VERSIONS=$(gh api             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "repos/${{ github.repository }}/packages/container/uncut-core/versions"             --jq "[.[] | {id, name}] | length" 2>/dev/null || echo "0")
+          echo "Found $VERSIONS versions"
 
-          echo "$VERSIONS" | while read -r line; do
+          # Get all version IDs except latest
+          gh api             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "repos/${{ github.repository }}/packages/container/uncut-core/versions"             --jq ".[] | {id, name}" 2>/dev/null | while read -r line; do
             ID=$(echo "$line" | jq -r '.id')
             NAME=$(echo "$line" | jq -r '.name')
-            if [ "$NAME" != "latest" ] && [ "$NAME" != "null" ]; then
+            if [ "$NAME" != "latest" ] && [ "$NAME" != "null" ] && [ "$NAME" != "" ]; then
               echo "Deleting version $ID ($NAME)"
-              gh api                 -X DELETE                 -H "Accept: application/vnd.github+json"                 -H "X-GitHub-Api-Version: 2022-11-28"                 "/users/${{ github.actor }}/packages/container/uncut-core/versions/$ID"
+              gh api                 -X DELETE                 -H "Accept: application/vnd.github+json"                 -H "X-GitHub-Api-Version: 2022-11-28"                 "repos/${{ github.repository }}/packages/container/uncut-core/versions/$ID"                 || echo "Failed to delete $ID"
             fi
           done
 
-          echo "Done. Only latest remains."
+          # Also delete any remaining tags via skopeo
+          echo "Cleaning up remaining tags via skopeo..."
+          for tag in main sha-3e269bc; do
+            skopeo delete "docker://ghcr.io/rawizhere/uncut-core:$tag" 2>/dev/null && echo "Deleted $tag" || echo "Tag $tag already gone"
+          done
+
+          echo "Done."
