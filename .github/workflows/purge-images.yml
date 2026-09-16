@@ -11,64 +11,51 @@ jobs:
   purge:
     runs-on: ubuntu-latest
     steps:
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Remove all tags except latest
+      - name: Purge via GitHub Packages API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          REPO="ghcr.io/rawizhere/uncut-core"
-          
-          # Get registry token
-          TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:rawizhere/uncut-core:pull,push,delete" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" | jq -r '.token')
+          OWNER="${{ github.actor }}"
+          PKG="uncut-core"
 
-          # Get all tags
-          ALL_TAGS=$(curl -s "https://ghcr.io/v2/rawizhere/uncut-core/tags/list" \
-            -H "Authorization: Bearer $TOKEN" | jq -r '.tags[]')
+          # Get all versions
+          echo "Fetching versions..."
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/users/$OWNER/packages/container/$PKG/versions" \
+            --jq '.[] | "\(.id) \(.name)"' > /tmp/versions.txt || {
+              echo "User-level API failed, trying org-level..."
+              gh api \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "/orgs/$OWNER/packages/container/$PKG/versions" \
+                --jq '.[] | "\(.id) \(.name)"' > /tmp/versions.txt
+            }
 
-          echo "=== Tags ==="
-          echo "$ALL_TAGS"
-          echo ""
+          echo "All versions:"
+          cat /tmp/versions.txt
 
-          for tag in $ALL_TAGS; do
-            [ "$tag" = "latest" ] && continue
-            echo "--- $tag ---"
-
-            # Get manifest via GET to obtain Docker-Content-Digest header
-            HEADERS=$(curl -s -D /tmp/headers -o /tmp/body "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$tag" \
-              -H "Authorization: Bearer $TOKEN" \
-              -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
-              -H "Accept: application/vnd.oci.image.index.v1+json" \
-              -H "Accept: application/vnd.docker.distribution.manifest.v2+json")
-
-            DIGEST=$(grep -i "Docker-Content-Digest" /tmp/headers | tr -d '\r' | awk '{print $2}')
+          # Delete all except latest
+          while read -r id name; do
+            [ "$name" = "latest" ] && continue
+            [ -z "$id" ] && continue
             
-            if [ -n "$DIGEST" ]; then
-              echo "  Digest: $DIGEST"
-              
-              # Delete manifest by digest
-              HTTP_CODE=$(curl -s -o /tmp/del -w "%{http_code}" -X DELETE \
-                "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$DIGEST" \
-                -H "Authorization: Bearer $TOKEN" \
-                -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json")
-              
-              echo "  DELETE: HTTP $HTTP_CODE"
-              if [ "$HTTP_CODE" = "202" ]; then
-                echo "  Deleted!"
-              else
-                cat /tmp/del
-              fi
-            else
-              echo "  No digest found in headers:"
-              cat /tmp/headers
-            fi
-          done
+            echo "Deleting version $id ($name)..."
+            STATUS=$(gh api \
+              -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/users/$OWNER/packages/container/$PKG/versions/$id" \
+              -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000")
+            
+            echo "  HTTP $STATUS"
+          done < /tmp/versions.txt
 
           echo ""
-          echo "=== Remaining ==="
-          curl -s "https://ghcr.io/v2/rawizhere/uncut-core/tags/list" \
-            -H "Authorization: Bearer $TOKEN" | jq -r '.tags[]'
+          echo "=== Remaining versions ==="
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/users/$OWNER/packages/container/$PKG/versions" \
+            --jq '.[] | "\(.id) \(.name)"'
