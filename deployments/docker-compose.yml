@@ -6,7 +6,7 @@ services:
       args:
         VERSION: ${UNCUT_VERSION:-3.2.0}
         SINGBOX_EXT_VERSION: ${SINGBOX_EXT_VERSION:-1.13.18-extended-2.6.5}
-    image: ${UNCUT_IMAGE:-ghcr.io/rawizhere/uncut-core:v3.2.0}
+    image: ${UNCUT_IMAGE:-ghcr.io/rawizhere/uncut-core:latest}
     container_name: uncut-node
     restart: unless-stopped
     network_mode: host
