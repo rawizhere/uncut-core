@@ -125,6 +125,13 @@ if [ $i -ge 120 ]; then
 fi
 
 echo "node is up."
+
+# The node just created the nginx log files fail2ban jails watch: a first-start
+# fail2ban came up before they existed and silently skipped the uncut jails.
+if systemctl is-active --quiet fail2ban 2>/dev/null; then
+	systemctl restart fail2ban
+fi
+
 echo "next steps:"
 echo "  docker exec uncut-node raw info                 # revision, cert expiry, proxy links"
 echo "  docker exec uncut-node raw add -n <name>        # add a client, prints links and a QR"
