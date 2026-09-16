@@ -18,38 +18,41 @@ jobs:
           OWNER="${{ github.actor }}"
           PKG="uncut-core"
 
-          # Get all versions
-          echo "Fetching versions..."
+          # Get all version IDs and names
           gh api \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/users/$OWNER/packages/container/$PKG/versions" \
-            --jq '.[] | "\(.id) \(.name)"' > /tmp/versions.txt || {
-              echo "User-level API failed, trying org-level..."
-              gh api \
-                -H "Accept: application/vnd.github+json" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "/orgs/$OWNER/packages/container/$PKG/versions" \
-                --jq '.[] | "\(.id) \(.name)"' > /tmp/versions.txt
-            }
+            --jq '.[] | "\(.id) \(.name)"' > /tmp/versions.txt
 
-          echo "All versions:"
+          echo "=== All versions ==="
           cat /tmp/versions.txt
+          echo ""
+
+          # Find latest version ID
+          LATEST_ID=$(grep " latest$" /tmp/versions.txt | awk '{print $1}')
+          echo "Latest version ID: $LATEST_ID"
+          echo ""
 
           # Delete all except latest
           while read -r id name; do
-            [ "$name" = "latest" ] && continue
+            [ "$id" = "$LATEST_ID" ] && continue
             [ -z "$id" ] && continue
             
             echo "Deleting version $id ($name)..."
-            STATUS=$(gh api \
+            RESPONSE=$(gh api \
               -X DELETE \
               -H "Accept: application/vnd.github+json" \
               -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/users/$OWNER/packages/container/$PKG/versions/$id" \
-              -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000")
+              "/users/$OWNER/packages/container/$PKG/versions/$id" 2>&1) || true
             
-            echo "  HTTP $STATUS"
+            if echo "$RESPONSE" | grep -q "204\|deleted"; then
+              echo "  Deleted"
+            elif [ -z "$RESPONSE" ]; then
+              echo "  Deleted (empty response)"
+            else
+              echo "  Response: $(echo "$RESPONSE" | head -1)"
+            fi
           done < /tmp/versions.txt
 
           echo ""
