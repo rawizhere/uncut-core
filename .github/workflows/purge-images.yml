@@ -10,40 +10,40 @@ permissions:
 jobs:
   purge:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Remove all tags except latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Get all tags via skopeo inspect
-          TAGS=$(skopeo inspect docker://ghcr.io/rawizhere/uncut-core:latest 2>/dev/null || true)
+          set -e
+          
+          # Get registry token with write scope
+          TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:rawizhere/uncut-core:pull,push,delete"             -H "Authorization: Bearer $GITHUB_TOKEN" | jq -r '.token')
 
-          # Get package versions via GitHub API - using repo-level endpoint
-          echo "Fetching package versions..."
-          VERSIONS=$(gh api             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "repos/${{ github.repository }}/packages/container/uncut-core/versions"             --jq "[.[] | {id, name}] | length" 2>/dev/null || echo "0")
-          echo "Found $VERSIONS versions"
+          # Get all tags
+          TAGS=$(curl -s "https://ghcr.io/v2/rawizhere/uncut-core/tags/list"             -H "Authorization: Bearer $TOKEN" | jq -r '.tags[]')
 
-          # Get all version IDs except latest
-          gh api             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "repos/${{ github.repository }}/packages/container/uncut-core/versions"             --jq ".[] | {id, name}" 2>/dev/null | while read -r line; do
-            ID=$(echo "$line" | jq -r '.id')
-            NAME=$(echo "$line" | jq -r '.name')
-            if [ "$NAME" != "latest" ] && [ "$NAME" != "null" ] && [ "$NAME" != "" ]; then
-              echo "Deleting version $ID ($NAME)"
-              gh api                 -X DELETE                 -H "Accept: application/vnd.github+json"                 -H "X-GitHub-Api-Version: 2022-11-28"                 "repos/${{ github.repository }}/packages/container/uncut-core/versions/$ID"                 || echo "Failed to delete $ID"
-            fi
+          echo "All tags:"
+          echo "$TAGS"
+
+          # Get latest digest
+          LATEST_DIGEST=$(curl -s -I "https://ghcr.io/v2/rawizhere/uncut-core/manifests/latest"             -H "Authorization: Bearer $TOKEN"             -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json"             2>/dev/null | grep -i docker-content-digest | tr -d '\r' | awk '{print $2}')
+
+          echo "Latest digest: $LATEST_DIGEST"
+
+          # For each tag that is NOT latest, get its digest and if different, delete it
+          for tag in $TAGS; do
+            [ "$tag" = "latest" ] && continue
+            
+            echo "Processing tag: $tag"
+            DIGEST=$(curl -s -I "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$tag"               -H "Authorization: Bearer $TOKEN"               -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json"               2>/dev/null | grep -i docker-content-digest | tr -d '\r' | awk '{print $2}')
+            
+            echo "  Digest: $DIGEST"
+
+            # Delete the manifest
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE               "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$DIGEST"               -H "Authorization: Bearer $TOKEN"               -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json")
+            
+            echo "  DELETE $tag ($DIGEST): HTTP $HTTP_CODE"
           done
 
-          # Also delete any remaining tags via skopeo
-          echo "Cleaning up remaining tags via skopeo..."
-          for tag in main sha-3e269bc; do
-            skopeo delete "docker://ghcr.io/rawizhere/uncut-core:$tag" 2>/dev/null && echo "Deleted $tag" || echo "Tag $tag already gone"
-          done
-
-          echo "Done."
+          echo "Done. Only latest remains."
