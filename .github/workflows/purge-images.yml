@@ -1,0 +1,40 @@
+
+name: Purge all images except latest
+
+on:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List and remove all versions except latest
+        run: |
+          # Get all tags
+          MANIFEST_LIST=$(skopeo inspect docker://ghcr.io/rawizhere/uncut-core:latest)
+          LATEST_DIGEST=$(echo "$MANIFEST_LIST" | jq -r '.Digest')
+          echo "Latest digest: $LATEST_DIGEST"
+
+          # Get all package versions via API
+          VERSIONS=$(gh api             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "/users/${{ github.actor }}/packages/container/uncut-core/versions"             --jq ".[] | {id: .id, name: .name}")
+
+          echo "$VERSIONS" | while read -r line; do
+            ID=$(echo "$line" | jq -r '.id')
+            NAME=$(echo "$line" | jq -r '.name')
+            if [ "$NAME" != "latest" ] && [ "$NAME" != "null" ]; then
+              echo "Deleting version $ID ($NAME)"
+              gh api                 -X DELETE                 -H "Accept: application/vnd.github+json"                 -H "X-GitHub-Api-Version: 2022-11-28"                 "/users/${{ github.actor }}/packages/container/uncut-core/versions/$ID"
+            fi
+          done
+
+          echo "Done. Only latest remains."
