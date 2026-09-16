@@ -66,9 +66,9 @@ func GenerateTUICLink(client config.Client, s config.Settings) string {
 func GenerateVLESSWSLink(client config.Client, s config.Settings) string {
 	path := s.Transport.WSPath()
 	encodedPath := url.PathEscape(path)
-	// ed=2048: client may pack the first bytes into the WebSocket handshake.
+	// No ed: some converters drop early_data_header_name and build a dead ws outbound.
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&ed=2048&fp=chrome#%s",
+		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=chrome#%s",
 		client.UUID, s.Domain, encodedPath, linkLabel(client.Name, "ws", s.Tag),
 	)
 }
