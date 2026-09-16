@@ -1,7 +1,6 @@
 package core
 
 import (
-	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -17,13 +16,10 @@ import (
 	"github.com/rawizhere/uncut-core/internal/db"
 )
 
-const legacySubSalt = "uncut-core-sub-salt-v1"
-
 var clientNameRegex = regexp.MustCompile(`^[a-z0-9_-]+$`)
 
 var (
 	ErrInvalidClientName = errors.New("invalid client name: must match ^[a-z0-9_-]+$")
-	ErrInvalidUUID       = errors.New("invalid client UUID")
 	ErrClientExists      = errors.New("client with this name already exists")
 	ErrClientNotFound    = errors.New("client not found")
 )
@@ -48,20 +44,13 @@ func GeneratePassword() string {
 	return hex.EncodeToString(b)
 }
 
-func GenerateSubHash(clientUUID, salt string) string {
-	if salt == "" {
-		salt = legacySubSalt
+// GenerateSubToken makes the per-client subscription secret: random, so one rotation kills a leaked URL.
+func GenerateSubToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand unavailable: " + err.Error())
 	}
-	sum := md5.Sum([]byte(clientUUID + salt))
-	return hex.EncodeToString(sum[:])
-}
-
-func subSalt(store *db.Store) string {
-	value, err := store.GetSetting("sub_salt")
-	if err != nil || value == "" {
-		return legacySubSalt
-	}
-	return value
+	return hex.EncodeToString(b)
 }
 
 // DefaultProtocols must mirror config.DefaultProtocols: lag makes subscriptions omit protocols.
@@ -77,23 +66,12 @@ func DefaultProtocols() []string {
 }
 
 func AddClientWithDefaultProtocols(store *db.Store, name string) (*config.Client, error) {
-	return AddClientWithUUID(store, name, "", DefaultProtocols())
+	return AddClient(store, name, DefaultProtocols())
 }
 
 func AddClient(store *db.Store, name string, protocols []string) (*config.Client, error) {
-	return AddClientWithUUID(store, name, "", protocols)
-}
-
-// AddClientWithUUID takes a caller-supplied UUID so subscriptions match across nodes. Empty means generate one.
-func AddClientWithUUID(store *db.Store, name, clientUUID string, protocols []string) (*config.Client, error) {
 	if err := ValidateClientName(name); err != nil {
 		return nil, err
-	}
-
-	if clientUUID == "" {
-		clientUUID = GenerateUUID()
-	} else if _, err := uuid.Parse(clientUUID); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidUUID, err)
 	}
 
 	clients, err := store.GetClients()
@@ -102,20 +80,12 @@ func AddClientWithUUID(store *db.Store, name, clientUUID string, protocols []str
 	}
 
 	for _, c := range clients {
-		// A resent UUID must confirm, not fail: a node that crashed mid-write would never converge.
-		if clientUUID != "" && c.UUID == clientUUID {
-			if len(protocols) > 0 {
-				return UpdateClientProtocols(store, clientUUID, protocols)
-			}
-			return &c, nil
-		}
 		if c.Name == name {
 			return nil, ErrClientExists
 		}
 	}
 
-	password := GeneratePassword()
-	subHash := GenerateSubHash(clientUUID, subSalt(store))
+	clientUUID := GenerateUUID()
 
 	sanitizedProtos := make([]string, 0, len(protocols))
 	for _, p := range protocols {
@@ -128,8 +98,8 @@ func AddClientWithUUID(store *db.Store, name, clientUUID string, protocols []str
 	client := config.Client{
 		UUID:      clientUUID,
 		Name:      name,
-		Password:  password,
-		SubHash:   subHash,
+		Password:  GeneratePassword(),
+		SubHash:   GenerateSubToken(),
 		Protocols: sanitizedProtos,
 		CreatedAt: config.GetMSKTime(),
 	}
@@ -138,8 +108,31 @@ func AddClientWithUUID(store *db.Store, name, clientUUID string, protocols []str
 		return nil, fmt.Errorf("save client: %w", err)
 	}
 
-	slog.Info("Client created", "name", name, "uuid", clientUUID, "sub_hash", subHash)
+	slog.Info("Client created", "name", name, "uuid", clientUUID)
 	return &client, nil
+}
+
+// RotateClientSub replaces the per-client subscription token: the old URL dies, the file under the old hash is removed.
+func RotateClientSub(store *db.Store, subsDir, clientUUID string) (*config.Client, error) {
+	client, err := store.GetClientByUUID(clientUUID)
+	if err != nil {
+		return nil, fmt.Errorf("client not found: %w", err)
+	}
+
+	old := client.SubHash
+	client.SubHash = GenerateSubToken()
+	if err := store.AddClient(*client); err != nil {
+		return nil, fmt.Errorf("rotate sub token: %w", err)
+	}
+
+	if subsDir != "" && old != "" {
+		if err := os.Remove(filepath.Join(subsDir, old)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("Failed to remove old subscription file", "uuid", clientUUID, "error", err)
+		}
+	}
+
+	slog.Info("Client subscription rotated", "name", client.Name, "uuid", clientUUID)
+	return client, nil
 }
 
 func DeleteClient(store *db.Store, subsDir, clientUUID string) error {

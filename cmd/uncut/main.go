@@ -58,6 +58,7 @@ func main() {
 	rootCmd.AddCommand(changeDomainCmd())
 	rootCmd.AddCommand(infoCmd())
 	rootCmd.AddCommand(rotatePathsCmd())
+	rootCmd.AddCommand(rotateSubCmd())
 	rootCmd.AddCommand(setProtocolsCmd())
 	rootCmd.AddCommand(setClientProtocolsCmd())
 	rootCmd.AddCommand(setMTProtoTLSCmd())
@@ -151,7 +152,6 @@ func openMenu(cmd *cobra.Command) error {
 func addClientCmd() *cobra.Command {
 	var (
 		name   string
-		uuid   string
 		asJSON bool
 		protos []string
 	)
@@ -173,7 +173,7 @@ func addClientCmd() *cobra.Command {
 			defer func() { _ = store.Close() }()
 
 			opts := setup.DefaultOptions(dataDir, installDir)
-			view, err := nodeops.AddClient(cmd.Context(), store, opts, name, uuid, protos)
+			view, err := nodeops.AddClient(cmd.Context(), store, opts, name, protos)
 			if err != nil {
 				return err
 			}
@@ -186,9 +186,33 @@ func addClientCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&name, "name", "n", "", "Client name")
-	cmd.Flags().StringVar(&uuid, "uuid", "", "Client UUID, pin it to keep the same identity across re-adds")
 	cmd.Flags().StringSliceVar(&protos, "protocols", nil, "Protocols to enable, defaults to the standard set")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	return cmd
+}
+
+func rotateSubCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "rotate-sub <name>",
+		Short: "Regenerate a client's subscription token; the old subscription URL dies",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := initStore()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+
+			opts := setup.DefaultOptions(dataDir, installDir)
+			view, err := nodeops.RotateSub(cmd.Context(), store, opts, args[0])
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("Subscription rotated for %s.\nNew URL: %s\nOld URL no longer works.\n", view.Name, view.Subscription)
+			return nil
+		},
+	}
 	return cmd
 }
 

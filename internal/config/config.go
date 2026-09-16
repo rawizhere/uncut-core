@@ -130,7 +130,6 @@ type Settings struct {
 	TUICPassword      string   `json:"tuic_password,omitempty"`
 	TUICUUID          string   `json:"tuic_uuid,omitempty"`
 	Protocols         []string `json:"protocols,omitempty"`
-	SubSalt           string   `json:"sub_salt,omitempty"`
 	InstallDir        string   `json:"install_dir,omitempty"`
 	SubsDir           string   `json:"subs_dir,omitempty"`
 	LogDir            string   `json:"log_dir,omitempty"`

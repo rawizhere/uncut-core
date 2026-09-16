@@ -78,8 +78,8 @@ type Info struct {
 	DohURL string `json:"doh_url"`
 }
 
-// AddClient creates the client and rebuilds; a caller-supplied UUID keeps subscriptions identical across nodes.
-func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name, uuid string, protos []string) (*ClientView, error) {
+// AddClient creates the client and rebuilds.
+func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name string, protos []string) (*ClientView, error) {
 	if name == "" {
 		return nil, errors.New("client name is required")
 	}
@@ -94,7 +94,7 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name, u
 	if len(chosen) == 0 {
 		chosen = core.DefaultProtocols()
 	}
-	client, err := core.AddClientWithUUID(store, name, uuid, chosen)
+	client, err := core.AddClient(store, name, chosen)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +104,33 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name, u
 		if err := store.AddClient(*client); err != nil {
 			return nil, fmt.Errorf("update client: %w", err)
 		}
+	}
+
+	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+		return nil, fmt.Errorf("rebuild configs: %w", err)
+	}
+
+	domain, _ := store.GetSetting("domain")
+	view := NewClientView(*client, domain, settings.Transport)
+	return &view, nil
+}
+
+// RotateSub replaces the client's subscription token and rebuilds; the old subscription URL dies.
+func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name string) (*ClientView, error) {
+	client, err := findClient(store, name)
+	if err != nil {
+		return nil, err
+	}
+
+	appCfg, _ := config.LoadAppConfig()
+	settings, err := setup.Ensure(ctx, store, appCfg, opts)
+	if err != nil {
+		return nil, fmt.Errorf("ensure setup: %w", err)
+	}
+
+	client, err = core.RotateClientSub(store, opts.SubsDir, client.UUID)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {

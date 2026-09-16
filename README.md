@@ -90,6 +90,7 @@ raw daemon            # the supervisor: sing-box, nginx, tproxy
 raw add -n phone      # add a client, prints its subscription URL and a QR
 raw list              # clients with subscription URLs
 raw del -n phone      # remove a client and its subscription file
+raw rotate-sub phone  # new subscription token for one client; the old URL dies
 raw info              # version, tag, DoH endpoint, transport revision, cert expiry
 raw rotate-paths      # re-generate random paths; re-issue subscriptions
 raw change-domain node2.example.com   # new domain + a fresh certificate

@@ -82,9 +82,6 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		"mtproto_raw_secret": func() (string, error) {
 			return randomHex(16)
 		},
-		"sub_salt": func() (string, error) {
-			return randomToken(16)
-		},
 		"tuic_password": func() (string, error) {
 			return randomToken(16)
 		},

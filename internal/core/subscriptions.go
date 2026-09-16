@@ -193,9 +193,9 @@ func RegenerateAllSubscriptions(store *db.Store, subDir string, s config.Setting
 
 	for _, client := range clients {
 		if client.SubHash == "" {
-			client.SubHash = GenerateSubHash(client.UUID, s.SubSalt)
+			client.SubHash = GenerateSubToken()
 			if err := store.AddClient(client); err != nil {
-				return fmt.Errorf("persist sub hash for %s: %w", client.Name, err)
+				return fmt.Errorf("persist sub token for %s: %w", client.Name, err)
 			}
 		}
 		if err := WriteSubscriptionFile(subDir, client, s); err != nil {
