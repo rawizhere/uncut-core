@@ -4,6 +4,8 @@ Stealth VPN node in one container: a relay core behind nginx on a single
 host, several transports sharing TCP 443, a Telegram proxy bridge, client
 subscriptions and self-renewing TLS.
 
+Handing this repository to an agent? Point it at AGENTS.md first.
+
 The node is the whole program. There is no control plane — state lives in one
 SQLite file on the box and everything is driven from `raw` on that box.
 
@@ -92,6 +94,7 @@ raw list              # clients with subscription URLs
 raw del -n phone      # remove a client and its subscription file
 raw rotate-sub phone  # new subscription token for one client; the old URL dies
 raw info              # version, tag, DoH endpoint, transport revision, cert expiry
+raw doctor            # health checks: dns, ports, cert, transports, subscriptions
 raw rotate-paths      # re-generate random paths; re-issue subscriptions
 raw change-domain node2.example.com   # new domain + a fresh certificate
 raw sync-ip [--force <ip>]            # pin the detected public IP

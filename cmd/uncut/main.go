@@ -57,6 +57,7 @@ func main() {
 	rootCmd.AddCommand(renewCertCmd())
 	rootCmd.AddCommand(changeDomainCmd())
 	rootCmd.AddCommand(infoCmd())
+	rootCmd.AddCommand(doctorCmd())
 	rootCmd.AddCommand(rotatePathsCmd())
 	rootCmd.AddCommand(rotateSubCmd())
 	rootCmd.AddCommand(setProtocolsCmd())
@@ -349,6 +350,41 @@ func changeDomainCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("Domain successfully changed to %s and all subscriptions updated.\n", strings.TrimSpace(strings.ToLower(args[0])))
+			return nil
+		},
+	}
+}
+
+func doctorCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor",
+		Short: "Run local health checks: dns, ports, certificate, transports, subscriptions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := initStore()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+
+			opts := setup.DefaultOptions(dataDir, installDir)
+			checks := nodeops.Doctor(cmd.Context(), store, opts)
+
+			passed := 0
+			for _, c := range checks {
+				status := "FAIL"
+				if c.Pass {
+					status = "PASS"
+					passed++
+				}
+				fmt.Printf("%-14s %s  %s\n", c.Name+":", status, c.Detail)
+				if c.Fix != "" {
+					fmt.Printf("%-14s       fix: %s\n", "", c.Fix)
+				}
+			}
+			fmt.Printf("result: %d/%d PASS\n", passed, len(checks))
+			if passed < len(checks) {
+				return fmt.Errorf("doctor: %d of %d checks failed", len(checks)-passed, len(checks))
+			}
 			return nil
 		},
 	}
