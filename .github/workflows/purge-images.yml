@@ -11,39 +11,60 @@ jobs:
   purge:
     runs-on: ubuntu-latest
     steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Remove all tags except latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
-          
-          # Get registry token with write scope
-          TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:rawizhere/uncut-core:pull,push,delete"             -H "Authorization: Bearer $GITHUB_TOKEN" | jq -r '.token')
+          set +e
+
+          # Get registry token
+          TOKEN=$(curl -s "https://ghcr.io/token?service=ghcr.io&scope=repository:rawizhere/uncut-core:pull,push,delete" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" | jq -r '.token')
 
           # Get all tags
-          TAGS=$(curl -s "https://ghcr.io/v2/rawizhere/uncut-core/tags/list"             -H "Authorization: Bearer $TOKEN" | jq -r '.tags[]')
+          ALL_TAGS=$(curl -s "https://ghcr.io/v2/rawizhere/uncut-core/tags/list" \
+            -H "Authorization: Bearer $TOKEN" | jq -r '.tags[]')
 
-          echo "All tags:"
-          echo "$TAGS"
+          echo "=== All tags ==="
+          echo "$ALL_TAGS"
+          echo ""
 
-          # Get latest digest
-          LATEST_DIGEST=$(curl -s -I "https://ghcr.io/v2/rawizhere/uncut-core/manifests/latest"             -H "Authorization: Bearer $TOKEN"             -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json"             2>/dev/null | grep -i docker-content-digest | tr -d '\r' | awk '{print $2}')
-
-          echo "Latest digest: $LATEST_DIGEST"
-
-          # For each tag that is NOT latest, get its digest and if different, delete it
-          for tag in $TAGS; do
+          # For each non-latest tag, get its digest and delete
+          for tag in $ALL_TAGS; do
             [ "$tag" = "latest" ] && continue
-            
-            echo "Processing tag: $tag"
-            DIGEST=$(curl -s -I "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$tag"               -H "Authorization: Bearer $TOKEN"               -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json"               2>/dev/null | grep -i docker-content-digest | tr -d '\r' | awk '{print $2}')
-            
-            echo "  Digest: $DIGEST"
 
-            # Delete the manifest
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE               "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$DIGEST"               -H "Authorization: Bearer $TOKEN"               -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json")
+            # Get manifest digest via GET (not HEAD)
+            MANIFEST=$(curl -s "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$tag" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json")
             
-            echo "  DELETE $tag ($DIGEST): HTTP $HTTP_CODE"
+            # Get digest from response headers using -D
+            DIGEST=$(curl -s -D- "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$tag" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
+              -o /dev/null 2>/dev/null | grep -i docker-content-digest | tr -d '\r' | awk '{print $2}')
+
+            if [ -n "$DIGEST" ]; then
+              # Delete manifest by digest
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+                "https://ghcr.io/v2/rawizhere/uncut-core/manifests/$DIGEST" \
+                -H "Authorization: Bearer $TOKEN" \
+                -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json")
+              echo "DELETE $tag -> $DIGEST -> HTTP $HTTP_CODE"
+            else
+              # Fallback: try skopeo delete
+              echo "No digest for $tag, trying skopeo..."
+              skopeo delete "docker://ghcr.io/rawizhere/uncut-core:$tag" 2>&1 && echo "skopeo deleted $tag" || echo "skopeo failed $tag"
+            fi
           done
 
-          echo "Done. Only latest remains."
+          # Verify what's left
+          echo ""
+          echo "=== Remaining tags ==="
+          curl -s "https://ghcr.io/v2/rawizhere/uncut-core/tags/list" \
+            -H "Authorization: Bearer $TOKEN" | jq -r '.tags[]'
