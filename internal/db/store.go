@@ -3,71 +3,54 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"time"
 
 	"github.com/rawizhere/uncut-core/internal/config"
-	_ "modernc.org/sqlite"
+	"github.com/rawizhere/uncut-core/internal/storage"
 )
 
 type Store struct {
 	db *sql.DB
 }
 
+// nodeMigrations is the schema as versioned steps: v1 reproduces the original
+// CREATE TABLE block; schema edits append versions instead of editing v1.
+var nodeMigrations = []storage.Migration{
+	{Version: 1, Statements: []string{`
+CREATE TABLE IF NOT EXISTS settings (
+	key TEXT PRIMARY KEY,
+	value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS clients (
+	uuid TEXT PRIMARY KEY,
+	name TEXT,
+	password TEXT,
+	sub_hash TEXT,
+	protocols TEXT,
+	created_at DATETIME
+);`}},
+	// v2 renamed the country token to a free-form tag; the old key dies.
+	{Version: 2, Statements: []string{`
+INSERT INTO settings (key, value)
+SELECT 'tag', value FROM settings WHERE key = 'country'
+  AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'tag');
+
+DELETE FROM settings WHERE key = 'country';
+`}},
+}
+
 func New(dbPath string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)", dbPath)
-
-	db, err := sql.Open("sqlite", dsn)
+	db, err := storage.Open(dbPath, storage.Options{ForeignKeys: true}, nodeMigrations)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite db: %w", err)
+		return nil, err
 	}
-
-	db.SetMaxOpenConns(1)
-
-	if err := db.Ping(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("ping sqlite db: %w", err)
-	}
-
-	if err := os.Chmod(dbPath, 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		_ = db.Close()
-		return nil, fmt.Errorf("restrict db permissions: %w", err)
-	}
-
-	s := &Store{db: db}
-	if err := s.initSchema(); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
-
-	return s, nil
+	return &Store{db: db}, nil
 }
 
 func (s *Store) Close() error {
 	return s.db.Close()
-}
-
-func (s *Store) initSchema() error {
-	query := `
-	CREATE TABLE IF NOT EXISTS settings (
-		key TEXT PRIMARY KEY,
-		value TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS clients (
-		uuid TEXT PRIMARY KEY,
-		name TEXT,
-		password TEXT,
-		sub_hash TEXT,
-		protocols TEXT,
-		created_at DATETIME
-	);`
-
-	_, err := s.db.Exec(query)
-	return err
 }
 
 func (s *Store) GetSetting(key string) (string, error) {

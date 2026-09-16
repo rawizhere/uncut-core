@@ -7,15 +7,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-acme/lego/v4/certcrypto"
@@ -27,32 +24,27 @@ import (
 )
 
 const (
-	renewBefore        = 30 * 24 * time.Hour
-	renewInterval      = 24 * time.Hour
-	selfSignedValidity = 90 * 24 * time.Hour
+	renewBefore   = 30 * 24 * time.Hour
+	renewInterval = 24 * time.Hour
 )
 
 var errNoCertificate = errors.New("no certificate")
 
+// Manager issues TLS certificates from Let's Encrypt over HTTP-01 (webroot) —
+// the only CA. The ssl server renders only after the first certificate lands.
 type Manager struct {
 	domain   string
 	email    string
 	certsDir string
 	webRoot  string
-	staging  bool
-	eabKID   string
-	eabHMAC  string
 }
 
-func New(domain, email, certsDir, webRoot string, staging bool, eabKID, eabHMAC string) *Manager {
+func New(domain, email, certsDir, webRoot string) *Manager {
 	return &Manager{
 		domain:   domain,
 		email:    email,
 		certsDir: certsDir,
 		webRoot:  webRoot,
-		staging:  staging,
-		eabKID:   eabKID,
-		eabHMAC:  eabHMAC,
 	}
 }
 
@@ -62,30 +54,6 @@ func (m *Manager) CertPath() string {
 
 func (m *Manager) KeyPath() string {
 	return filepath.Join(m.certsDir, m.domain+".key")
-}
-
-func (m *Manager) EnsureSelfSigned() (bool, error) {
-	if fileExists(m.CertPath()) && fileExists(m.KeyPath()) {
-		return false, nil
-	}
-
-	certPEM, keyPEM, err := selfSigned(m.domain)
-	if err != nil {
-		return false, err
-	}
-
-	if err := os.MkdirAll(m.certsDir, 0o755); err != nil {
-		return false, fmt.Errorf("create certs dir: %w", err)
-	}
-	if err := writeFile(m.CertPath(), certPEM, 0o644); err != nil {
-		return false, err
-	}
-	if err := writeFile(m.KeyPath(), keyPEM, 0o600); err != nil {
-		return false, err
-	}
-
-	slog.Warn("Issued temporary self-signed certificate", "domain", m.domain)
-	return true, nil
 }
 
 func (m *Manager) Ensure() (bool, error) {
@@ -150,10 +118,16 @@ func (m *Manager) valid() bool {
 	if err != nil {
 		return false
 	}
-	if cert.Subject.String() == cert.Issuer.String() {
-		return false
-	}
 	return time.Until(cert.NotAfter) > renewBefore
+}
+
+// Expires reports the certificate's expiry; the renewal window uses it.
+func (m *Manager) Expires() (time.Time, error) {
+	cert, err := m.parse()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return cert.NotAfter, nil
 }
 
 func (m *Manager) parse() (*x509.Certificate, error) {
@@ -169,90 +143,85 @@ func (m *Manager) parse() (*x509.Certificate, error) {
 	return x509.ParseCertificate(block.Bytes)
 }
 
+func (m *Manager) getAccountKey() (crypto.PrivateKey, error) {
+	keyPath := filepath.Join(m.certsDir, "acme_account.key")
+	if data, err := os.ReadFile(keyPath); err == nil {
+		block, _ := pem.Decode(data)
+		if block != nil {
+			if key, err := x509.ParseECPrivateKey(block.Bytes); err == nil {
+				return key, nil
+			}
+		}
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate account key: %w", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err == nil {
+		_ = os.MkdirAll(m.certsDir, 0o755)
+		_ = writeFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
+	}
+	return key, nil
+}
+
 func (m *Manager) issue() error {
-	caEndpoints := []string{
-		lego.LEDirectoryProduction,
-	}
-	if m.eabKID != "" && m.eabHMAC != "" {
-		caEndpoints = []string{
-			"https://acme.zerossl.com/v2/DV90",
-			lego.LEDirectoryProduction,
-		}
-	}
-	if m.staging {
-		caEndpoints = []string{lego.LEDirectoryStaging}
+	accountKey, err := m.getAccountKey()
+	if err != nil {
+		return err
 	}
 
-	var lastErr error
-	for _, caURL := range caEndpoints {
-		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		if err != nil {
-			return fmt.Errorf("generate account key: %w", err)
-		}
+	email := m.email
+	if email == "" {
+		email = "admin@" + m.domain
+	}
+	account := &user{email: email, key: accountKey}
+	cfg := lego.NewConfig(account)
+	cfg.Certificate.KeyType = certcrypto.EC256
+	cfg.CADirURL = lego.LEDirectoryProduction
 
-		account := &user{email: m.email, key: key}
-		cfg := lego.NewConfig(account)
-		cfg.Certificate.KeyType = certcrypto.EC256
-		cfg.CADirURL = caURL
-
-		client, err := lego.NewClient(cfg)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		provider, err := webroot.NewHTTPProvider(m.webRoot)
-		if err != nil {
-			return fmt.Errorf("create webroot provider: %w", err)
-		}
-		if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
-			return fmt.Errorf("set http-01 provider: %w", err)
-		}
-
-		var reg *registration.Resource
-		if strings.Contains(caURL, "zerossl.com") && m.eabKID != "" && m.eabHMAC != "" {
-			reg, err = client.Registration.RegisterWithExternalAccountBinding(registration.RegisterEABOptions{
-				TermsOfServiceAgreed: true,
-				Kid:                  m.eabKID,
-				HmacEncoded:          m.eabHMAC,
-			})
-		} else {
-			reg, err = client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
-		}
-
-		if err != nil {
-			lastErr = err
-			slog.Warn("ACME registration failed, trying next CA", "ca", caURL, "error", err)
-			continue
-		}
-		account.reg = reg
-
-		res, err := client.Certificate.Obtain(certificate.ObtainRequest{
-			Domains: []string{m.domain},
-			Bundle:  true,
-		})
-		if err != nil {
-			lastErr = err
-			slog.Warn("ACME directory attempt failed, trying fallback", "ca", caURL, "error", err)
-			continue
-		}
-
-		if err := os.MkdirAll(m.certsDir, 0o755); err != nil {
-			return fmt.Errorf("create certs dir: %w", err)
-		}
-		if err := writeFile(m.CertPath(), res.Certificate, 0o644); err != nil {
-			return err
-		}
-		if err := writeFile(m.KeyPath(), res.PrivateKey, 0o600); err != nil {
-			return err
-		}
-
-		slog.Info("Issued TLS certificate", "domain", m.domain, "ca", caURL)
-		return nil
+	client, err := lego.NewClient(cfg)
+	if err != nil {
+		return fmt.Errorf("create lego client: %w", err)
 	}
 
-	_, _ = m.EnsureSelfSigned()
-	return fmt.Errorf("all ACME providers failed: %w", lastErr)
+	provider, err := webroot.NewHTTPProvider(m.webRoot)
+	if err != nil {
+		return fmt.Errorf("create webroot provider: %w", err)
+	}
+	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
+		return fmt.Errorf("set http-01 provider: %w", err)
+	}
+
+	reg, err := client.Registration.ResolveAccountByKey()
+	if err != nil {
+		reg, err = client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+	}
+	if err != nil {
+		return fmt.Errorf("acme registration: %w", err)
+	}
+	account.reg = reg
+
+	res, err := client.Certificate.Obtain(certificate.ObtainRequest{
+		Domains: []string{m.domain},
+		Bundle:  true,
+	})
+	if err != nil {
+		return fmt.Errorf("certificate obtain: %w", err)
+	}
+
+	if err := os.MkdirAll(m.certsDir, 0o755); err != nil {
+		return fmt.Errorf("create certs dir: %w", err)
+	}
+	if err := writeFile(m.CertPath(), res.Certificate, 0o644); err != nil {
+		return err
+	}
+	if err := writeFile(m.KeyPath(), res.PrivateKey, 0o600); err != nil {
+		return err
+	}
+
+	slog.Info("Issued TLS certificate", "domain", m.domain, "ca", "letsencrypt")
+	return nil
 }
 
 type user struct {
@@ -273,52 +242,9 @@ func (u *user) GetPrivateKey() crypto.PrivateKey {
 	return u.key
 }
 
-func selfSigned(domain string) ([]byte, []byte, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate key: %w", err)
-	}
-
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return nil, nil, fmt.Errorf("generate serial: %w", err)
-	}
-
-	tpl := x509.Certificate{
-		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: domain},
-		DNSNames:              []string{domain},
-		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().Add(selfSignedValidity),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IsCA:                  true,
-		BasicConstraintsValid: true,
-	}
-
-	der, err := x509.CreateCertificate(rand.Reader, &tpl, &tpl, &key.PublicKey, key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create certificate: %w", err)
-	}
-
-	keyDER, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, nil, fmt.Errorf("marshal key: %w", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
-	return certPEM, keyPEM, nil
-}
-
 func writeFile(path string, data []byte, perm os.FileMode) error {
 	if err := renameio.WriteFile(path, data, perm); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

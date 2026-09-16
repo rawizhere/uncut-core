@@ -1,6 +1,6 @@
 [uncut-honeypot]
 enabled = true
-port = http,https,8443
+port = http,https
 filter = uncut-honeypot
 logpath = /opt/uncut/data/logs/nginx/access.log
 maxretry = 1
@@ -9,7 +9,7 @@ findtime = 600
 
 [uncut-dos]
 enabled = true
-port = http,https,8443
+port = http,https
 filter = nginx-limit-req
 logpath = /opt/uncut/data/logs/nginx/error.log
 maxretry = 10

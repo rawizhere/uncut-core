@@ -13,110 +13,88 @@ import (
 	"github.com/rawizhere/uncut-core/internal/db"
 )
 
-func getDPILinkParams(s config.Settings) string {
-	var params strings.Builder
-	if s.DPIFragment == "true" {
-		params.WriteString("&fragment=10-500,0-20")
+// linkLabel builds the visible entry name: name-protocol[-tag].
+// Lives only in the URL fragment — clients never send it to the server.
+func linkLabel(name, proto, tag string) string {
+	label := fmt.Sprintf("%s-%s", name, proto)
+	if IsValidTag(tag) {
+		label += "-" + tag
 	}
-	if s.DPIPadding == "true" {
-		params.WriteString("&padding=900-1200")
-	}
-	return params.String()
+	return label
 }
 
-func getRegion(s config.Settings) string {
-	if s.Region != "" {
-		return s.Region
+// IsValidTag: 1-16 alnum/dash/underscore, safe in a URL fragment; anything else renders no tag.
+func IsValidTag(s string) bool {
+	if s == "" || len(s) > 16 {
+		return false
 	}
-	return config.DefaultRegion
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func GenerateVLESSRealityLink(client config.Client, s config.Settings) string {
-	sni := s.SNI
-	if sni == "" {
-		sni = "dl.google.com"
-	}
-	dpiParams := getDPILinkParams(s)
-	region := getRegion(s)
-
+	// Link SNI must match the stream splitter's map; the transport is its source.
+	sni := s.RealityServerName
+	// 8443 is the loopback reality inbound; 443 is shared with nginx by SNI split.
 	return fmt.Sprintf(
-		"vless://%s@%s:8443?type=tcp&encryption=none&security=reality&pbk=%s&fp=chrome&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision%s#%s-%s-01",
-		client.UUID, s.Domain, s.RealityPubKey, sni, s.RealityShortID, dpiParams, client.Name, region,
+		"vless://%s@%s:443?type=tcp&encryption=none&security=reality&pbk=%s&fp=chrome&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision#%s",
+		client.UUID, s.Domain, s.RealityPubKey, sni, s.RealityShortID, linkLabel(client.Name, "reality", s.Tag),
 	)
 }
 
 func GenerateTUICLink(client config.Client, s config.Settings) string {
 	port := s.TUICPort
 	if port == "" {
-		port = "443"
+		port = config.DefaultTUICPort
 	}
 	pass := client.Password
 	if pass == "" {
 		pass = client.UUID
 	}
-	region := getRegion(s)
-
 	return fmt.Sprintf(
-		"tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=0#%s-%s-02",
-		client.UUID, pass, s.Domain, port, client.Name, region,
+		"tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=0#%s",
+		client.UUID, pass, s.Domain, port, linkLabel(client.Name, "tuic", s.Tag),
 	)
 }
 
 func GenerateVLESSWSLink(client config.Client, s config.Settings) string {
-	salt := s.ProtocolSalt
-	if salt == "" {
-		salt = "default"
-	}
-	path := fmt.Sprintf("/v1/streams/live-%s/ws", salt)
+	path := s.Transport.WSPath()
 	encodedPath := url.PathEscape(path)
-	dpiParams := getDPILinkParams(s)
-	region := getRegion(s)
-
+	// ed=2048: client may pack the first bytes into the WebSocket handshake.
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=chrome%s#%s-%s-03",
-		client.UUID, s.Domain, encodedPath, dpiParams, client.Name, region,
+		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&ed=2048&fp=chrome#%s",
+		client.UUID, s.Domain, encodedPath, linkLabel(client.Name, "ws", s.Tag),
 	)
 }
 
 func GenerateXHTTPStealthLink(client config.Client, s config.Settings) string {
-	salt := s.ProtocolSalt
-	if salt == "" {
-		salt = "default"
-	}
-	path := fmt.Sprintf("/v1/ingest/push/live-%s", salt)
+	path := s.Transport.XHTTPPath()
 	encodedPath := url.PathEscape(path)
-	dpiParams := getDPILinkParams(s)
-	region := getRegion(s)
-
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=stream-up&host=%s&fp=chrome%s#%s-%s-04",
-		client.UUID, s.Domain, encodedPath, s.Domain, dpiParams, client.Name, region,
+		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=packet-up&host=%s&fp=chrome#%s",
+		client.UUID, s.Domain, encodedPath, s.Domain, linkLabel(client.Name, "xhttp", s.Tag),
 	)
 }
 
 func GenerateVLESSHTTPUpgradeLink(client config.Client, s config.Settings) string {
-	salt := s.ProtocolSalt
-	if salt == "" {
-		salt = "default"
-	}
-	path := fmt.Sprintf("/v1/streams/live-%s/upgrade", salt)
+	path := s.Transport.UpgradePath()
 	encodedPath := url.PathEscape(path)
-	dpiParams := getDPILinkParams(s)
-	region := getRegion(s)
-
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=chrome%s#%s-%s-05",
-		client.UUID, s.Domain, encodedPath, s.Domain, dpiParams, client.Name, region,
+		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=chrome#%s",
+		client.UUID, s.Domain, encodedPath, s.Domain, linkLabel(client.Name, "httpupgrade", s.Tag),
 	)
 }
 
 func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
-	dpiParams := getDPILinkParams(s)
-	region := getRegion(s)
-
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=grpc&security=tls&serviceName=ingest.v1.IngestService&encryption=none&host=%s&fp=chrome%s#%s-%s-06",
-		client.UUID, s.Domain, s.Domain, dpiParams, client.Name, region,
+		"vless://%s@%s:443?type=grpc&security=tls&serviceName=%s&encryption=none&host=%s&fp=chrome#%s",
+		client.UUID, s.Domain, s.Transport.GRPCService(), s.Domain, linkLabel(client.Name, "grpc", s.Tag),
 	)
 }
 
@@ -128,7 +106,27 @@ func GenerateClientLinks(client config.Client, s config.Settings) []string {
 		serverProtoMap[strings.TrimSpace(p)] = true
 	}
 
-	clientProtos := client.Protocols
+	clientProtos := append([]string(nil), client.Protocols...)
+	if !client.ProtocolsExplicit {
+		// Non-explicit lists are creation snapshots: they merge in new server
+		// protocols. Explicit is an allowlist — off stays off.
+		for _, sp := range activeServerProtos {
+			sp = strings.TrimSpace(sp)
+			if sp == "" {
+				continue
+			}
+			found := false
+			for _, cp := range clientProtos {
+				if strings.TrimSpace(cp) == sp {
+					found = true
+					break
+				}
+			}
+			if !found {
+				clientProtos = append(clientProtos, sp)
+			}
+		}
+	}
 	if len(clientProtos) == 0 {
 		clientProtos = activeServerProtos
 	}
@@ -166,10 +164,6 @@ func GenerateSubscriptionPayload(client config.Client, s config.Settings) string
 		joined += "\n"
 	}
 	return base64.StdEncoding.EncodeToString([]byte(joined))
-}
-
-func GetSubscriptionURL(domain, subHash string) string {
-	return fmt.Sprintf("https://%s/v1/schemas/%s.bin", domain, subHash)
 }
 
 func WriteSubscriptionFile(subDir string, client config.Client, s config.Settings) error {

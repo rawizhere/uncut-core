@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -62,6 +63,27 @@ func GetAvailableVersionsFromURL(ctx context.Context, client *http.Client, relea
 	return versions, nil
 }
 
+// SingBoxBin resolves the artifact: a Maintenance-installed copy on the
+// install volume survives redeploys; the image pin is the fallback.
+func SingBoxBin(installDir string) string {
+	volume := filepath.Join(installDir, "bin", "sing-box")
+	if fi, err := os.Stat(volume); err == nil && !fi.IsDir() {
+		return volume
+	}
+	return "sing-box"
+}
+
+// CurrentVersion reports the installed sing-box artifact version ("1.13.18-…")
+// by asking the resolved binary itself; empty when absent or unreadable.
+func CurrentVersion(installDir string) string {
+	out, err := exec.Command(SingBoxBin(installDir), "version").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	return strings.TrimSpace(strings.TrimPrefix(line, "sing-box version"))
+}
+
 func InstallSingboxVersion(ctx context.Context, version string, targetPath string) error {
 	tag := version
 	if !strings.HasPrefix(tag, "v") {
@@ -97,6 +119,9 @@ func InstallSingboxVersion(ctx context.Context, version string, targetPath strin
 
 	tarReader := tar.NewReader(gzReader)
 	var foundBinary bool
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return fmt.Errorf("create target dir: %w", err)
+	}
 	tmpTarget := targetPath + ".tmp"
 
 	for {

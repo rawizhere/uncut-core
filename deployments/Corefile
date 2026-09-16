@@ -1,0 +1,11 @@
+# Private DoH endpoint on loopback 127.0.0.1:3053; nginx is the only client
+# and terminates TLS. The default path is /dns-query (RFC 8484). The upstream chain is the reserve: round-robin across plain 53 foreign resolvers, so a wholesale ban of popular public DoH does not kill the endpoint. Responses cache 300s at the node.
+https://.:3053 {
+    bind 127.0.0.1
+    forward . 8.8.8.8 1.1.1.1 9.9.9.9 94.140.14.14 {
+        policy round_robin
+        health_check 5s
+    }
+    cache 300
+    errors
+}

@@ -3,8 +3,11 @@ services:
     build:
       context: ..
       dockerfile: deployments/Dockerfile
-    image: ghcr.io/rawizhere/uncut-core:latest
-    container_name: uncut-core
+      args:
+        VERSION: ${UNCUT_VERSION:-3.2.0}
+        SINGBOX_EXT_VERSION: ${SINGBOX_EXT_VERSION:-1.13.18-extended-2.6.5}
+    image: ${UNCUT_IMAGE:-ghcr.io/rawizhere/uncut-core:v3.2.0}
+    container_name: uncut-node
     restart: unless-stopped
     network_mode: host
     env_file:
@@ -12,7 +15,6 @@ services:
     environment:
       - DATA_DIR=/opt/uncut/data
       - INSTALL_DIR=/opt/sing-box
-      - TZ=Europe/Moscow
     volumes:
       - uncut_data:/opt/uncut/data
       - uncut_install:/opt/sing-box

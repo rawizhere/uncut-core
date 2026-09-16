@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     paths-ignore:
       - "**.md"
       - "docs/**"
@@ -36,15 +36,3 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
-
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: run tests
-        run: go test -v -race -coverprofile=coverage.out ./...

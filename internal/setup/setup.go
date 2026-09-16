@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -22,6 +23,7 @@ import (
 	"github.com/rawizhere/uncut-core/internal/singbox"
 	"github.com/rawizhere/uncut-core/internal/supervisor"
 	"github.com/rawizhere/uncut-core/internal/tproxy"
+	"github.com/rawizhere/uncut-core/internal/transport"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -36,7 +38,6 @@ type Options struct {
 	WebRoot    string
 	SubsDir    string
 	LogDir     string
-	Staging    bool
 }
 
 func DefaultOptions(dataDir, installDir string) Options {
@@ -77,42 +78,12 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		return config.Settings{}, err
 	}
 
-	sni, err := setting(store, "sni", config.DefaultSNI)
-	if err != nil {
-		return config.Settings{}, err
-	}
-	if _, err := setting(store, "reality_server_name", sni); err != nil {
-		return config.Settings{}, err
-	}
-
 	generators := map[string]func() (string, error){
-		"protocol_salt": func() (string, error) { return randomHex(4) },
-		"api_version":   func() (string, error) { return randomAPIVersion(cfg.APIVersion), nil },
-		"region":        func() (string, error) { return determineRegion(cfg.Region, store), nil },
 		"mtproto_raw_secret": func() (string, error) {
 			return randomHex(16)
 		},
-		"mtproto_secret": func() (string, error) {
-			raw, _ := store.GetSetting("mtproto_raw_secret")
-			if raw == "" {
-				var err error
-				raw, err = randomHex(16)
-				if err != nil {
-					return "", err
-				}
-				_ = store.SetSetting("mtproto_raw_secret", raw)
-			}
-			sni, _ := store.GetSetting("sni")
-			if sni == "" {
-				sni = config.DefaultSNI
-			}
-			return fmt.Sprintf("ee%s%x", raw, sni), nil
-		},
 		"sub_salt": func() (string, error) {
 			return randomToken(16)
-		},
-		"telemetry_token": func() (string, error) {
-			return randomToken(24)
 		},
 		"tuic_password": func() (string, error) {
 			return randomToken(16)
@@ -131,19 +102,28 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		"tuic_port":           config.DefaultTUICPort,
 		"telegram_proxy_port": config.DefaultTelegramProxyPort,
 		"protocols":           strings.Join(stringProtocols(config.DefaultProtocols), ","),
-		"regions":             strings.Join(config.DefaultRegions, ","),
 	} {
 		if _, err := setting(store, key, fallback); err != nil {
 			return config.Settings{}, err
 		}
 	}
 
+	// 8443 was the old default (closed firewall port), not a choice: migrate it; custom values stay.
+	if get(store, "tuic_port") == "8443" {
+		if err := store.SetSetting("tuic_port", config.DefaultTUICPort); err != nil {
+			return config.Settings{}, fmt.Errorf("tuic port upgrade: %w", err)
+		}
+	}
+
+	// Stored protocol lists are first-init snapshots, not choices: merge in
+	// new defaults or subscriptions omit them. Explicit lists stay alone.
+	if err := mergeDefaultProtocols(store); err != nil {
+		return config.Settings{}, err
+	}
+
 	optional := map[string]string{
-		"email":           cfg.Email,
-		"country":         cfg.Country,
-		"regions":         cfg.Regions,
-		"protocol_salt":   cfg.ProtocolSalt,
-		"telemetry_token": cfg.TelemetryToken,
+		"email": cfg.Email,
+		"tag":   cfg.Tag,
 	}
 	for key, value := range optional {
 		if value == "" {
@@ -154,7 +134,6 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		}
 	}
 
-	// Seed initial clients if database is empty
 	clients, err := store.GetClients()
 	if err == nil && len(clients) == 0 {
 		clientNames := cfg.Clients
@@ -176,6 +155,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 }
 
 func Load(store *db.Store, opts Options) (config.Settings, error) {
+	var err error
 	settings := config.Settings{
 		InstallDir:        opts.InstallDir,
 		SubsDir:           opts.SubsDir,
@@ -183,32 +163,80 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		Protocols:         splitList(get(store, "protocols")),
 		Domain:            get(store, "domain"),
 		IP:                get(store, "server_ip"),
-		Country:           get(store, "country"),
+		Tag:               get(store, "tag"),
 		Email:             get(store, "email"),
 		RealityPrivKey:    get(store, "reality_private_key"),
 		RealityPubKey:     get(store, "reality_public_key"),
 		RealityShortID:    get(store, "reality_short_id"),
-		RealityServerName: get(store, "reality_server_name"),
-		SNI:               get(store, "sni"),
-		ProtocolSalt:      get(store, "protocol_salt"),
-		Regions:           splitList(get(store, "regions")),
-		TelemetryToken:    get(store, "telemetry_token"),
 		TUICPort:          get(store, "tuic_port"),
 		TUICPassword:      get(store, "tuic_password"),
 		TUICUUID:          get(store, "tuic_uuid"),
-		MTProtoSecret:     get(store, "mtproto_secret"),
 		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
+		MTProtoTLSDomain:  get(store, "mtproto_tls_domain"),
 		TelegramProxyPort: get(store, "telegram_proxy_port"),
-		APIVersion:        get(store, "api_version"),
-		Region:            get(store, "region"),
-		DPIFragment:       get(store, "dpi_fragment"),
-		DPIPadding:        get(store, "dpi_padding"),
 	}
 
+	settings.Transport, err = loadTransport(store)
+	if err != nil {
+		return config.Settings{}, err
+	}
+	// The transport is the sole source of the reality SNI; it travels with the rev.
+	settings.RealityServerName = settings.Transport.RealitySNI()
 	if settings.Domain == "" {
 		return config.Settings{}, fmt.Errorf("domain is not configured")
 	}
 	return settings, nil
+}
+
+// loadTransport: stored transport, migrated legend, or freshly generated.
+func loadTransport(store *db.Store) (*transport.Transport, error) {
+	raw := get(store, "transport")
+	if raw != "" {
+		var t transport.Transport
+		if err := json.Unmarshal([]byte(raw), &t); err != nil {
+			return nil, fmt.Errorf("parse transport: %w", err)
+		}
+		return &t, nil
+	}
+	if legacyRaw := get(store, "legend"); legacyRaw != "" {
+		var l transport.LegacyTemplates
+		if err := json.Unmarshal([]byte(legacyRaw), &l); err != nil {
+			return nil, fmt.Errorf("parse legacy legend: %w", err)
+		}
+		t := transport.FromLegacy(&l, get(store, "protocol_salt"))
+		if err := SaveTransport(store, t); err != nil {
+			return nil, err
+		}
+		for _, key := range []string{"legend", "protocol_salt"} {
+			if err := store.SetSetting(key, ""); err != nil {
+				return nil, fmt.Errorf("clear legacy %q: %w", key, err)
+			}
+		}
+		return t, nil
+	}
+	t, err := transport.Generate()
+	if err != nil {
+		return nil, fmt.Errorf("generate transport: %w", err)
+	}
+	if err := SaveTransport(store, t); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// SaveTransport stores the node's transport. Nil is refused: a missing transport would render obvious paths.
+func SaveTransport(store *db.Store, t *transport.Transport) error {
+	if t == nil {
+		return fmt.Errorf("transport: nil")
+	}
+	if err := t.Validate(); err != nil {
+		return fmt.Errorf("transport: %w", err)
+	}
+	data, err := json.Marshal(t)
+	if err != nil {
+		return fmt.Errorf("encode transport: %w", err)
+	}
+	return store.SetSetting("transport", string(data))
 }
 
 func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor, opts Options) error {
@@ -242,7 +270,7 @@ func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor
 		return fmt.Errorf("write nginx files: %w", err)
 	}
 
-	if err := tproxy.WriteConfig(opts.InstallDir, settings.Domain, settings.MTProtoRawSecret); err != nil {
+	if err := tproxy.WriteConfig(opts.InstallDir, settings.Domain, settings.MTProtoRawSecret, tproxy.DefaultPublicDir); err != nil {
 		return fmt.Errorf("write tproxy config: %w", err)
 	}
 
@@ -276,40 +304,15 @@ func generatorOptions(settings config.Settings, opts Options) (nginx.GeneratorOp
 	return nginx.GeneratorOptions{
 		Domain:            settings.Domain,
 		InstallDir:        opts.InstallDir,
-		ProtocolSalt:      settings.ProtocolSalt,
 		SubsDir:           settings.SubsDir,
 		LogDir:            settings.LogDir,
 		WebRoot:           opts.WebRoot,
 		ActiveProtocols:   settings.Protocols,
-		APIVersion:        settings.APIVersion,
-		Region:            settings.Region,
-		Regions:           config.ResolveRegions(settings.Regions, settings.Region),
-		TelemetryToken:    settings.TelemetryToken,
 		TelegramProxyPort: port,
+		Transport:         settings.Transport,
+		RealityServerName: settings.RealityServerName,
+		MTProtoTLSDomain:  settings.MTProtoTLSDomain,
 	}, nil
-}
-
-func randomAPIVersion(preferred string) string {
-	if preferred != "" {
-		return preferred
-	}
-	versions := []string{"2.4.1", "2.3.0", "2.5.0", "2.4.3"}
-	idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(versions))))
-	return versions[idx.Int64()]
-}
-
-func determineRegion(preferred string, store *db.Store) string {
-	if preferred != "" {
-		return preferred
-	}
-	domain := get(store, "domain")
-	for _, region := range config.DefaultRegions {
-		if strings.Contains(domain, region) {
-			return region
-		}
-	}
-	idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(config.DefaultRegions))))
-	return config.DefaultRegions[idx.Int64()]
 }
 
 func ensureRealityKeys(store *db.Store) error {
@@ -406,6 +409,63 @@ func write(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// mergeDefaultProtocols appends post-init default protocols to non-explicit
+// lists; explicit lists stay alone (merging resurrected disabled protocols).
+func mergeDefaultProtocols(store *db.Store) error {
+	defaults := stringProtocols(config.DefaultProtocols)
+
+	if get(store, "protocols_explicit") != "true" {
+		stored := splitList(get(store, "protocols"))
+		merged, added := mergeMissing(stored, defaults)
+		if added > 0 {
+			if err := store.SetSetting("protocols", strings.Join(merged, ",")); err != nil {
+				return fmt.Errorf("merge protocols: %w", err)
+			}
+			slog.Info("Added protocols introduced by the upgrade", "added", added)
+		}
+	}
+
+	clients, err := store.GetClients()
+	if err != nil {
+		return fmt.Errorf("fetch clients: %w", err)
+	}
+	for _, client := range clients {
+		if client.ProtocolsExplicit {
+			// An explicit allowlist is a choice: off stays off, like the server marker.
+			continue
+		}
+		clientMerged, clientAdded := mergeMissing(client.Protocols, defaults)
+		if clientAdded == 0 {
+			continue
+		}
+		client.Protocols = clientMerged
+		if err := store.AddClient(client); err != nil {
+			return fmt.Errorf("merge protocols for client %s: %w", client.Name, err)
+		}
+		slog.Info("Added protocols to client", "name", client.Name, "added", clientAdded)
+	}
+	return nil
+}
+
+// mergeMissing appends the missing entries in want order; returns the count.
+func mergeMissing(base, want []string) ([]string, int) {
+	seen := make(map[string]bool, len(base))
+	for _, p := range base {
+		seen[strings.TrimSpace(p)] = true
+	}
+	out := append([]string(nil), base...)
+	added := 0
+	for _, p := range want {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+		added++
+	}
+	return out, added
 }
 
 func stringProtocols(protos []config.InboundProtocol) []string {

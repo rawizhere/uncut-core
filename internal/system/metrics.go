@@ -30,7 +30,6 @@ type SSLMetrics struct {
 	NotAfter      time.Time
 	DaysRemaining int
 	IsValid       bool
-	SelfSigned    bool
 }
 
 func GetHostMetrics(dataDir string) HostMetrics {
@@ -177,7 +176,6 @@ func GetSSLMetrics(installDir, domain string) (*SSLMetrics, error) {
 
 	now := time.Now()
 	days := int(time.Until(cert.NotAfter).Hours() / 24)
-	isSelfSigned := cert.Subject.String() == cert.Issuer.String()
 
 	issuerName := cert.Issuer.CommonName
 	if issuerName == "" && len(cert.Issuer.Organization) > 0 {
@@ -194,6 +192,5 @@ func GetSSLMetrics(installDir, domain string) (*SSLMetrics, error) {
 		NotAfter:      cert.NotAfter,
 		DaysRemaining: days,
 		IsValid:       now.After(cert.NotBefore) && now.Before(cert.NotAfter),
-		SelfSigned:    isSelfSigned,
 	}, nil
 }

@@ -16,7 +16,6 @@ services:
       - DOMAIN=${DOMAIN:-dev.example.com}
       - DATA_DIR=/opt/uncut/data
       - INSTALL_DIR=/opt/sing-box
-      - TZ=Europe/Moscow
       - LOG_LEVEL=debug
     volumes:
       - ./dev_data:/opt/uncut/data

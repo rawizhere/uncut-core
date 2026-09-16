@@ -2,20 +2,17 @@ package tproxy
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/google/renameio/v2"
+	"github.com/rawizhere/uncut-core/internal/config"
 )
 
 type Profile struct {
@@ -29,13 +26,92 @@ type ProfilesConfig struct {
 	Profiles []Profile `json:"profiles"`
 }
 
+// Limits pins upstream defaults; the bridge page reads the batch size back.
+type Limits struct {
+	MaxHeaderBytes            int `json:"max_header_bytes"`
+	MaxBodyBytes              int `json:"max_body_bytes"`
+	MaxFramePayload           int `json:"max_frame_payload"`
+	CarrierBatchBytes         int `json:"carrier_batch_bytes"`
+	MaxStreamsPerSession      int `json:"max_streams_per_session"`
+	MaxClosedStreamIDs        int `json:"max_closed_stream_ids"`
+	MaxPendingPerSession      int `json:"max_pending_per_session"`
+	MaxPendingGlobal          int `json:"max_pending_global"`
+	MaxPendingItemsPerSession int `json:"max_pending_items_per_session"`
+	MaxPendingItemsGlobal     int `json:"max_pending_items_global"`
+	MaxSessionsPerIP          int `json:"max_sessions_per_ip"`
+	MaxSessionsGlobal         int `json:"max_sessions_global"`
+	MaxStreamsGlobal          int `json:"max_streams_global"`
+	MaxBackendDialsInFlight   int `json:"max_backend_dials_in_flight"`
+	NewSessionsPerMinute      int `json:"new_sessions_per_minute"`
+	NewSessionsBurst          int `json:"new_sessions_burst"`
+	NewStreamsPerMinute       int `json:"new_streams_per_minute"`
+	NewStreamsBurst           int `json:"new_streams_burst"`
+	MaxBootstrapsPerIP        int `json:"max_bootstraps_per_ip"`
+	MaxBootstrapsGlobal       int `json:"max_bootstraps_global"`
+	NewBootstrapsPerMinute    int `json:"new_bootstraps_per_minute"`
+	NewBootstrapsBurst        int `json:"new_bootstraps_burst"`
+	MaxProfiles               int `json:"max_profiles"`
+}
+
+type Timeouts struct {
+	BackendDial       string `json:"backend_dial"`
+	LongPoll          string `json:"long_poll"`
+	ReconnectGrace    string `json:"reconnect_grace"`
+	BootstrapLifetime string `json:"bootstrap_lifetime"`
+	ReadHeader        string `json:"read_header"`
+	Idle              string `json:"idle"`
+	Shutdown          string `json:"shutdown"`
+}
+
 type Config struct {
-	PublicHostname string `json:"public_hostname"`
-	Listen         string `json:"listen"`
-	AdminListen    string `json:"admin_listen"`
-	PublicDir      string `json:"public_dir"`
-	ProfilesFile   string `json:"profiles_file"`
-	EnablePprof    bool   `json:"enable_pprof"`
+	PublicHostname string   `json:"public_hostname"`
+	Listen         string   `json:"listen"`
+	AdminListen    string   `json:"admin_listen"`
+	PublicDir      string   `json:"public_dir"`
+	ProfilesFile   string   `json:"profiles_file"`
+	EnablePprof    bool     `json:"enable_pprof"`
+	Limits         Limits   `json:"limits"`
+	Timeouts       Timeouts `json:"timeouts"`
+}
+
+func defaultLimits() Limits {
+	return Limits{
+		MaxHeaderBytes:            16 * 1024,
+		MaxBodyBytes:              2 * 1024 * 1024,
+		MaxFramePayload:           1024 * 1024,
+		CarrierBatchBytes:         2 * 1024 * 1024,
+		MaxStreamsPerSession:      128,
+		MaxClosedStreamIDs:        4096,
+		MaxPendingPerSession:      32 * 1024 * 1024,
+		MaxPendingGlobal:          512 * 1024 * 1024,
+		MaxPendingItemsPerSession: 16 * 1024,
+		MaxPendingItemsGlobal:     256 * 1024,
+		MaxSessionsPerIP:          0,
+		MaxSessionsGlobal:         128,
+		MaxStreamsGlobal:          4096,
+		MaxBackendDialsInFlight:   256,
+		NewSessionsPerMinute:      600,
+		NewSessionsBurst:          128,
+		NewStreamsPerMinute:       6000,
+		NewStreamsBurst:           512,
+		MaxBootstrapsPerIP:        0,
+		MaxBootstrapsGlobal:       512,
+		NewBootstrapsPerMinute:    1200,
+		NewBootstrapsBurst:        256,
+		MaxProfiles:               32,
+	}
+}
+
+func defaultTimeouts() Timeouts {
+	return Timeouts{
+		BackendDial:       "5s",
+		LongPoll:          "25s",
+		ReconnectGrace:    "2m",
+		BootstrapLifetime: "2m",
+		ReadHeader:        "10s",
+		Idle:              "75s",
+		Shutdown:          "15s",
+	}
 }
 
 func EnsureSiteIndex(publicDir string) error {
@@ -48,26 +124,40 @@ func EnsureSiteIndex(publicDir string) error {
 		return nil
 	}
 
-	indexHTML := `<!DOCTYPE html><html><head><title>Edge Ingest Gateway</title></head><body><h3>Gateway Active</h3></body></html>`
+	indexHTML := `<!DOCTYPE html><html><head><meta name="robots" content="noindex"></head><body></body></html>`
 	return renameio.WriteFile(indexPath, []byte(indexHTML), 0o644)
 }
 
-func WriteConfig(installDir, domain, secret string) error {
+// DefaultPublicDir is where the operator-owned public site lives on a node.
+const DefaultPublicDir = "/srv/tproxy-site"
+
+// DefaultBackend is the loopback mtproto-proxy only tproxy itself may reach.
+const DefaultBackend = "127.0.0.1:2398"
+
+func WriteConfig(installDir, domain, secret, publicDir string) error {
 	tproxyDir := filepath.Join(installDir, "tproxy")
 	if err := os.MkdirAll(tproxyDir, 0o700); err != nil {
 		return fmt.Errorf("create tproxy dir: %w", err)
 	}
 
+	if publicDir == "" {
+		publicDir = DefaultPublicDir
+	}
+
 	profilesFile := filepath.Join(tproxyDir, "profiles.json")
 	configFile := filepath.Join(tproxyDir, "config.json")
-	publicDir := "/srv/tproxy-site"
+
+	// tproxy-server refuses to start without an index in public_dir.
+	if err := EnsureSiteIndex(publicDir); err != nil {
+		return fmt.Errorf("ensure tproxy site index: %w", err)
+	}
 
 	profiles := ProfilesConfig{
 		Profiles: []Profile{
 			{
 				Name:        "default",
 				Secret:      secret,
-				Backend:     "127.0.0.1:2398",
+				Backend:     DefaultBackend,
 				CarrierMode: "https",
 			},
 		},
@@ -75,11 +165,13 @@ func WriteConfig(installDir, domain, secret string) error {
 
 	cfg := Config{
 		PublicHostname: domain,
-		Listen:         "127.0.0.1:8080",
+		Listen:         net.JoinHostPort("127.0.0.1", config.DefaultTelegramProxyPort),
 		AdminListen:    "127.0.0.1:8081",
 		PublicDir:      publicDir,
 		ProfilesFile:   profilesFile,
 		EnablePprof:    false,
+		Limits:         defaultLimits(),
+		Timeouts:       defaultTimeouts(),
 	}
 
 	profilesData, err := json.MarshalIndent(profiles, "", "  ")
@@ -100,7 +192,6 @@ func WriteConfig(installDir, domain, secret string) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 
-	_ = EnsureSiteIndex(publicDir)
 	return nil
 }
 
@@ -141,19 +232,4 @@ func MaintainTelegramSecrets(ctx context.Context, onUpdate func()) {
 			update()
 		}
 	}
-}
-
-func DeriveCapability(domain, secretHex string) string {
-	decoded, err := hex.DecodeString(strings.TrimSpace(secretHex))
-	if err != nil {
-		return ""
-	}
-	mac := hmac.New(sha256.New, decoded)
-	_, _ = mac.Write([]byte("tdesktop-web-proxy-bridge-v1\n" + strings.ToLower(domain)))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-}
-
-func BridgeURL(domain, secretHex string) string {
-	cap := DeriveCapability(domain, secretHex)
-	return fmt.Sprintf("https://%s/?bridge=%s", domain, cap)
 }

@@ -57,10 +57,6 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 }
 
 func generateInbound(proto string, settings config.Settings, clients []config.Client) (map[string]any, error) {
-	salt := settings.ProtocolSalt
-	if salt == "" {
-		salt = "default"
-	}
 
 	installDir := settings.InstallDir
 	if installDir == "" {
@@ -78,8 +74,8 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":       users,
 			"transport": map[string]any{
 				"type":                   "ws",
-				"path":                   fmt.Sprintf("/v1/streams/live-%s/ws", salt),
-				"max_early_data":         0,
+				"path":                   settings.Transport.WSPath(),
+				"max_early_data":         2048,
 				"early_data_header_name": "Sec-WebSocket-Protocol",
 			},
 		}, nil
@@ -93,14 +89,14 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"listen_port": 10002,
 			"users":       users,
 			"transport": map[string]any{
-				"type":                     "xhttp",
-				"path":                     fmt.Sprintf("/v1/ingest/push/live-%s", salt),
-				"mode":                     "stream-up",
-				"x_padding_bytes":          "100-2500",
-				"no_sse_header":            false,
-				"sc_max_each_post_bytes":   1000000,
-				"sc_max_buffered_posts":    30,
-				"sc_stream_up_server_secs": "20-80",
+				"type": "xhttp",
+				"path": settings.Transport.XHTTPPath(),
+				// packet-up survives the nginx hop; stream-up stalls behind an h1 proxy.
+				"mode":                   "packet-up",
+				"x_padding_bytes":        "100-2500",
+				"no_sse_header":          false,
+				"sc_max_each_post_bytes": 1000000,
+				"sc_max_buffered_posts":  30,
 			},
 		}, nil
 
@@ -114,7 +110,8 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":       users,
 			"transport": map[string]any{
 				"type": "httpupgrade",
-				"path": fmt.Sprintf("/v1/streams/live-%s/upgrade", salt),
+				"path": settings.Transport.UpgradePath(),
+				"host": settings.Domain,
 			},
 		}, nil
 
@@ -128,20 +125,14 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":       users,
 			"transport": map[string]any{
 				"type":         "grpc",
-				"service_name": "ingest.v1.IngestService",
+				"service_name": settings.Transport.GRPCService(),
 			},
 		}, nil
 
 	case string(config.ProtoVLESSReality):
 		users := filterRealityUsers(clients, proto)
-		sni := settings.SNI
-		if sni == "" {
-			sni = "dl.google.com"
-		}
-		handshakeServer := settings.RealityServerName
-		if handshakeServer == "" {
-			handshakeServer = sni
-		}
+		// Client SNI = handshake target: nginx hands over the hello (ssl_preread).
+		sni := settings.RealityServerName
 
 		shortIDs := []string{}
 		if settings.RealityShortID != "" {
@@ -149,9 +140,10 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}
 
 		return map[string]any{
-			"type":        "vless",
-			"tag":         "vless-reality",
-			"listen":      "0.0.0.0",
+			"type": "vless",
+			"tag":  "vless-reality",
+			// Loopback only: the stream splitter in nginx is the only client.
+			"listen":      "127.0.0.1",
 			"listen_port": 8443,
 			"users":       users,
 			"tls": map[string]any{
@@ -160,7 +152,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 				"reality": map[string]any{
 					"enabled": true,
 					"handshake": map[string]any{
-						"server":      handshakeServer,
+						"server":      sni,
 						"server_port": 443,
 					},
 					"private_key":         settings.RealityPrivKey,
@@ -172,7 +164,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 
 	case string(config.ProtoTUIC):
 		users := filterTUICUsers(clients, proto)
-		port := 443
+		port := 8443 // matches config.DefaultTUICPort
 		if settings.TUICPort != "" {
 			if p, err := strconv.Atoi(settings.TUICPort); err == nil {
 				port = p
@@ -191,7 +183,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"users":              users,
 			"congestion_control": "bbr",
 			"auth_timeout":       "3s",
-			"zero_rtt_handshake": false,
+			"zero_rtt_handshake": true,
 			"heartbeat":          "10s",
 			"tls": map[string]any{
 				"enabled":          true,

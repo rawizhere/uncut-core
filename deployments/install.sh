@@ -1,201 +1,130 @@
-#!/usr/bin/env bash
-set -e
+#!/bin/sh
+# Uncut Core node bootstrap: one command deploys the whole node. curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/deployments/install.sh \ | sh -s -- --domain node-eu-1.example.com --email admin@example.com Flags: --domain FQDN        required: the node's public domain (DNS A record must point here) --email ADDR         required: ACME account email --tag TAG            optional: label tail on client links (default: de) --tz ZONE            optional: timezone (default: Europe/Moscow) --ref GITREF         optional: branch/tag to fetch (default: main) --image IMAGE        optional: pull a prebuilt image instead of building --dir DIR            optional: install root (default: /opt/uncut)
 
-# ==============================================================================
-# Uncut Core 3.0 One-Line Installer (Docker-based)
-# ==============================================================================
+set -eu
 
-# Ensure script is run as root
-if [ "$(id -u)" -ne 0 ]; then
-    echo "This script must be run as root. Use 'sudo bash install.sh'" >&2
-    exit 1
-fi
+DIR=/opt/uncut
+REF=main
+IMAGE=
+DOMAIN=
+EMAIL=
+TAG=de
+TZ=Europe/Moscow
 
-DOMAIN=""
-EMAIL=""
-REGION="eu-1"
-API_VERSION="2.4.1"
-CLIENTS="admin"
-ZEROSSL_KID=""
-ZEROSSL_HMAC=""
+usage() {
+	echo "usage: install.sh --domain FQDN --email ADDR [--tag TAG] [--tz ZONE] [--ref REF] [--image IMAGE] [--dir DIR]" >&2
+	exit 2
+}
 
 while [ $# -gt 0 ]; do
-    case "$1" in
-        -d|--domain)
-            DOMAIN="$2"
-            shift 2
-            ;;
-        -m|--email)
-            EMAIL="$2"
-            shift 2
-            ;;
-        -r|--region)
-            REGION="$2"
-            shift 2
-            ;;
-        -v|--api-version)
-            API_VERSION="$2"
-            shift 2
-            ;;
-        -c|--clients)
-            CLIENTS="$2"
-            shift 2
-            ;;
-        --zerossl-kid)
-            ZEROSSL_KID="$2"
-            shift 2
-            ;;
-        --zerossl-hmac)
-            ZEROSSL_HMAC="$2"
-            shift 2
-            ;;
-        -h|--help)
-            echo "Usage: install.sh [--domain example.com] [--email admin@example.com] [--region eu-1] [--api-version 2.4.1] [--clients user1,user2] [--zerossl-kid <kid>] [--zerossl-hmac <hmac>]"
-            exit 0
-            ;;
-        *)
-            shift
-            ;;
-    esac
+	case "$1" in
+	--domain) DOMAIN=$2; shift 2 ;;
+	--email) EMAIL=$2; shift 2 ;;
+	--tag) TAG=$2; shift 2 ;;
+	--tz) TZ=$2; shift 2 ;;
+	--ref) REF=$2; shift 2 ;;
+	--image) IMAGE=$2; shift 2 ;;
+	--dir) DIR=$2; shift 2 ;;
+	--help) usage ;;
+	*) usage ;;
+	esac
 done
 
-INSTALL_DIR="/opt/uncut"
-DEPLOY_DIR="$INSTALL_DIR/deployments"
+[ -n "$DOMAIN" ] || usage
+[ -n "$EMAIL" ] || usage
 
-echo "=== Installing Dependencies (Docker & Compose) ==="
+if [ "$(id -u)" != 0 ]; then
+	echo "run as root (or pipe to: sudo sh)" >&2
+	exit 1
+fi
+
+# Docker: install when missing.
 if ! command -v docker >/dev/null 2>&1; then
-    curl -fsSL https://get.docker.com | sh
+	echo "==> installing docker"
+	curl -fsSL https://get.docker.com | sh
+fi
+if ! docker compose version >/dev/null 2>&1; then
+	echo "docker compose plugin missing" >&2
+	exit 1
 fi
 
-mkdir -p "$DEPLOY_DIR" "$INSTALL_DIR/data" "$INSTALL_DIR/install"
+# The compose bind volumes need the device dirs before the first up.
+mkdir -p "$DIR/data" "$DIR/install"
 
-echo "=== Configuring Host Firewall ==="
-SSH_PORT="22"
-if [ -f /etc/ssh/sshd_config ]; then
-    DETECTED_PORT=$(grep -E '^\s*Port\s+[0-9]+' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | tail -n1)
-    [ -n "$DETECTED_PORT" ] && SSH_PORT="$DETECTED_PORT"
-fi
-
-if ! command -v ufw >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq ufw >/dev/null 2>&1 || true
-fi
-
-if command -v ufw >/dev/null 2>&1; then
-    echo "Configuring and enabling UFW..."
-    ufw default deny incoming >/dev/null 2>&1 || true
-    ufw default allow outgoing >/dev/null 2>&1 || true
-    ufw allow "${SSH_PORT}/tcp" >/dev/null 2>&1 || true
-    ufw allow 80/tcp >/dev/null 2>&1 || true
-    ufw allow 443/tcp >/dev/null 2>&1 || true
-    ufw allow 443/udp >/dev/null 2>&1 || true
-    ufw allow 8443/tcp >/dev/null 2>&1 || true
-    ufw deny 2398/tcp >/dev/null 2>&1 || true
-    ufw deny 8888/tcp >/dev/null 2>&1 || true
-    ufw --force enable >/dev/null 2>&1 || true
-elif command -v iptables >/dev/null 2>&1; then
-    echo "Configuring iptables fallback rules..."
-    iptables -C INPUT -p tcp --dport 2398 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 2398 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || true
-    iptables -C INPUT -p tcp --dport 8888 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || iptables -I INPUT -p tcp --dport 8888 ! -s 127.0.0.1 -j DROP >/dev/null 2>&1 || true
-fi
-
-# Interactive prompt if flags were omitted
-if [ -z "$DOMAIN" ] && [ ! -f "$DEPLOY_DIR/.env" ]; then
-    echo ""
-    read -rp "Enter your server domain (e.g. ingest-eu-1.example.com): " DOMAIN
-    read -rp "Enter admin email (e.g. admin@example.com): " EMAIL
-fi
-
-# Write or update .env if domain supplied
-if [ -n "$DOMAIN" ]; then
-    if [ -f "$DEPLOY_DIR/.env" ]; then
-        OLD_EMAIL=$(grep -E '^EMAIL=' "$DEPLOY_DIR/.env" | cut -d= -f2-)
-        OLD_KID=$(grep -E '^ZEROSSL_EAB_KID=' "$DEPLOY_DIR/.env" | cut -d= -f2-)
-        OLD_HMAC=$(grep -E '^ZEROSSL_EAB_HMAC=' "$DEPLOY_DIR/.env" | cut -d= -f2-)
-        [ -z "$EMAIL" ] && EMAIL="$OLD_EMAIL"
-        [ -z "$ZEROSSL_KID" ] && ZEROSSL_KID="$OLD_KID"
-        [ -z "$ZEROSSL_HMAC" ] && ZEROSSL_HMAC="$OLD_HMAC"
-    fi
-    cat > "$DEPLOY_DIR/.env" << ENV_EOF
-DOMAIN=${DOMAIN}
-EMAIL=${EMAIL:-admin@${DOMAIN}}
-REGION=${REGION}
-API_VERSION=${API_VERSION}
-CLIENTS=${CLIENTS}
-ZEROSSL_EAB_KID=${ZEROSSL_KID}
-ZEROSSL_EAB_HMAC=${ZEROSSL_HMAC}
-ENV_EOF
-fi
-
-# Download or create docker-compose.yml
-cat > "$DEPLOY_DIR/docker-compose.yml" << 'COMPOSE_EOF'
-services:
-  uncut:
-    image: ghcr.io/rawizhere/uncut-core:latest
-    container_name: uncut-core
-    restart: unless-stopped
-    network_mode: host
-    env_file:
-      - .env
-    environment:
-      - DATA_DIR=/opt/uncut/data
-      - INSTALL_DIR=/opt/sing-box
-      - TZ=Europe/Moscow
-    volumes:
-      - uncut_data:/opt/uncut/data
-      - uncut_install:/opt/sing-box
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-volumes:
-  uncut_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /opt/uncut/data
-  uncut_install:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /opt/uncut/install
-COMPOSE_EOF
-
-# Setup host wrapper commands 'raw' and 'uncut'
-for cmd in raw uncut; do
-    cat > "/usr/local/bin/$cmd" << 'WRAPPER_EOF'
-#!/bin/sh
-if [ -t 0 ]; then
-    exec docker exec -it uncut-core uncut "$@"
+# Fetch the repository that carries the compose file and the build context.
+SRC="$DIR/uncut-core"
+if [ -d "$SRC/.git" ]; then
+	git -C "$SRC" fetch --depth 1 origin "$REF"
+	git -C "$SRC" checkout --detach FETCH_HEAD
 else
-    exec docker exec -i uncut-core uncut "$@"
+	git clone --depth 1 --branch "$REF" https://github.com/rawizhere/uncut-core "$SRC"
 fi
-WRAPPER_EOF
-    chmod +x "/usr/local/bin/$cmd"
+
+# fail2ban on the host: honeypot bans (one probe 404 -> 24h) and nginx
+# rate-limit bans. apt-based systems only; jails live in deployments/fail2ban.
+if command -v apt-get >/dev/null 2>&1; then
+	echo "==> installing fail2ban"
+	apt-get update -qq
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban
+	mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d "$DIR/data/logs/nginx"
+	cp "$SRC/deployments/fail2ban/filter.d/uncut-honeypot.conf" /etc/fail2ban/filter.d/
+	cp "$SRC/deployments/fail2ban/jail.d/uncut-nginx.local" /etc/fail2ban/jail.d/
+	# The package default enables the sshd jail — but it bans port 22 only. Pin
+	# the real port when SSH moved off 22, or the brute-force ban hits nothing.
+	SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
+	if [ -z "$SSH_PORT" ]; then
+		SSH_PORT=$(awk '/^Port /{print $2; exit}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null)
+	fi
+	if [ -n "$SSH_PORT" ] && [ "$SSH_PORT" != "22" ]; then
+		printf '[sshd]\nport = %s\n' "$SSH_PORT" > /etc/fail2ban/jail.d/sshd-port.local
+	fi
+	systemctl enable --now fail2ban 2>/dev/null || service fail2ban restart 2>/dev/null || true
+else
+	echo "fail2ban: apt-get not found, skipping (jails are in deployments/fail2ban)"
+fi
+
+# Best-effort sanity: the domain should resolve to this host's public address.
+PUBIP=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)
+DOMIP=$(getent hosts "$DOMAIN" 2>/dev/null | awk '{print $1; exit}' || true)
+if [ -n "$PUBIP" ] && [ -n "$DOMIP" ] && [ "$PUBIP" != "$DOMIP" ]; then
+	echo "WARNING: $DOMAIN resolves to $DOMIP but this host's address is $PUBIP" >&2
+fi
+
+# .env from flags.
+ENVFILE="$SRC/deployments/.env"
+{
+	echo "DOMAIN=$DOMAIN"
+	echo "EMAIL=$EMAIL"
+	echo "TAG=$TAG"
+	echo "TZ=$TZ"
+	echo "LOG_LEVEL=info"
+} > "$ENVFILE"
+
+cd "$SRC/deployments"
+
+echo "==> building and starting the node"
+if [ -n "$IMAGE" ]; then
+	UNCUT_IMAGE=$IMAGE docker compose up -d
+else
+	docker compose up -d --build
+fi
+
+echo "==> waiting for the node to come up"
+i=0
+while [ $i -lt 120 ]; do
+	if curl -fsS --max-time 3 http://127.0.0.1:8088/healthz >/dev/null 2>&1; then
+		break
+	fi
+	i=$((i + 1))
+	sleep 1
 done
-
-echo "=== Wrapper commands 'raw' and 'uncut' installed ==="
-
-if [ -f "$DEPLOY_DIR/.env" ]; then
-    echo "=== Starting Uncut Core Daemon ==="
-    cd "$DEPLOY_DIR" && docker compose pull && docker compose up -d --force-recreate
-    echo ""
-    echo "=== Waiting for services to initialize... ==="
-    sleep 3
-    echo ""
-    uncut list || true
-    echo ""
-    echo "=== Active Port Security Check ==="
-    ss -tlnp 2>/dev/null | grep -E ':(80|443|8443|2398|8888)' || true
-    echo ""
-    echo "=== Installation Complete! ==="
-    echo "Run 'uncut' or 'raw' anytime to open the management console."
-else
-    echo "=== Please configure $DEPLOY_DIR/.env and run 'cd $DEPLOY_DIR && docker compose up -d' ==="
+if [ $i -ge 120 ]; then
+	echo "node did not answer /healthz in 120s; logs:" >&2
+	docker compose logs --tail 50 uncut >&2 || true
+	exit 1
 fi
+
+echo "node is up."
+echo "next steps:"
+echo "  docker exec uncut-node raw info                 # revision, cert expiry, proxy links"
+echo "  docker exec uncut-node raw add -n <name>        # add a client, prints links and a QR"
