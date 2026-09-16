@@ -21,13 +21,7 @@ jobs:
 
       - name: Remove old tags
         run: |
-          TAGS=("3.0.0" "3.0.1" "3.0.2" "3.0.3" \
-                "sha-66cca75" "sha-54154fa" "sha-0b441f4" "sha-b32d3e1" \
-                "sha-af95842" "sha-daebe7f" "sha-5906f0c" "sha-f62bff9" \
-                "sha-5e821c6" "sha-a2e8e00" "sha-731b29b" "sha-1dcdbf5" \
-                "sha-d5f525d" "sha-619e513" "sha-3cff398" "sha-4b56e53" \
-                "sha-e0a010d" "sha-afc1ee2" "sha-2c71574" "sha-b793989" \
-                "sha-959b698" "sha-0850a66")
+          TAGS=("main" "sha-3e269bc")
           for tag in "${TAGS[@]}"; do
             echo "Removing ghcr.io/rawizhere/uncut-core:$tag"
             skopeo delete "docker://ghcr.io/rawizhere/uncut-core:$tag" || true
