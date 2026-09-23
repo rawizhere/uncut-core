@@ -133,7 +133,10 @@ type Settings struct {
 	// Hysteria2Obfs: salamander obfs password; empty renders no obfs block.
 	Hysteria2Obfs string `json:"hysteria2_obfs,omitempty"`
 	// Hysteria2HopPorts: client port-hopping range; set only when the host DNATs it onto 443.
-	Hysteria2HopPorts string   `json:"hysteria2_hop_ports,omitempty"`
+	Hysteria2HopPorts string `json:"hysteria2_hop_ports,omitempty"`
+	// Hysteria2UpMbps/DownMbps: server brutal-CC bandwidth caps; empty renders no fields and keeps BBR.
+	Hysteria2UpMbps   string   `json:"hysteria2_up_mbps,omitempty"`
+	Hysteria2DownMbps string   `json:"hysteria2_down_mbps,omitempty"`
 	Protocols         []string `json:"protocols,omitempty"`
 	InstallDir        string   `json:"install_dir,omitempty"`
 	SubsDir           string   `json:"subs_dir,omitempty"`

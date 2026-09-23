@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -481,6 +482,26 @@ func SetProtocols(ctx context.Context, store *db.Store, opts setup.Options, prot
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 	return resolved, nil
+}
+
+// SetHysteria2Bandwidth stores the brutal-CC caps; zero values clear them back to BBR.
+func SetHysteria2Bandwidth(ctx context.Context, store *db.Store, opts setup.Options, up, down int) error {
+	for key, val := range map[string]int{"hysteria2_up_mbps": up, "hysteria2_down_mbps": down} {
+		if val < 0 {
+			return fmt.Errorf("bandwidth must be >= 0")
+		}
+		stored := ""
+		if val > 0 {
+			stored = strconv.Itoa(val)
+		}
+		if err := store.SetSetting(key, stored); err != nil {
+			return fmt.Errorf("save %s: %w", key, err)
+		}
+	}
+	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+		return fmt.Errorf("rebuild configs: %w", err)
+	}
+	return nil
 }
 
 // SetCert installs a custom certificate and reloads nginx + sing-box.

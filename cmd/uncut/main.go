@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -65,6 +66,7 @@ func main() {
 	rootCmd.AddCommand(setMTProtoTLSCmd())
 	rootCmd.AddCommand(setSNICmd())
 	rootCmd.AddCommand(setCertCmd())
+	rootCmd.AddCommand(hysteria2BandwidthCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -477,6 +479,41 @@ func setProtocolsCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&protos, "protocols", nil, "comma-separated protocols to enable")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
 	return cmd
+}
+
+func hysteria2BandwidthCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "hysteria2-bandwidth <up> <down>",
+		Short: "Set the hysteria2 brutal-CC bandwidth caps in Mbps, 0 clears back to BBR",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			up, err := strconv.Atoi(args[0])
+			if err != nil {
+				return fmt.Errorf("up: %w", err)
+			}
+			down, err := strconv.Atoi(args[1])
+			if err != nil {
+				return fmt.Errorf("down: %w", err)
+			}
+
+			store, err := initStore()
+			if err != nil {
+				return err
+			}
+			defer func() { _ = store.Close() }()
+
+			opts := setup.DefaultOptions(dataDir, installDir)
+			if err := nodeops.SetHysteria2Bandwidth(cmd.Context(), store, opts, up, down); err != nil {
+				return err
+			}
+			if up == 0 && down == 0 {
+				fmt.Println("Hysteria2 bandwidth cleared, back to BBR")
+				return nil
+			}
+			fmt.Printf("Hysteria2 bandwidth set: up %d Mbps, down %d Mbps\n", up, down)
+			return nil
+		},
+	}
 }
 
 func rotatePathsCmd() *cobra.Command {

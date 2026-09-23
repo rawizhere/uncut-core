@@ -58,12 +58,13 @@ func GenerateHysteria2Link(client config.Client, s config.Settings) string {
 		link += "?obfs=salamander&obfs-password=" + s.Hysteria2Obfs
 	}
 	// mport only when the host has the DNAT range; a closed range would kill the whole link.
+	// hy2 URI spec wants a dash in the range (mport=20000-30000); the colon form is sing-box-server only.
 	if s.Hysteria2HopPorts != "" {
 		sep := "?"
 		if strings.Contains(link, "?") {
 			sep = "&"
 		}
-		link += sep + "mport=" + s.Hysteria2HopPorts
+		link += sep + "mport=" + strings.ReplaceAll(s.Hysteria2HopPorts, ":", "-")
 	}
 	return link + "#" + linkLabel(client.Name, "hysteria2", s.Tag)
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -179,6 +180,13 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 				"certificate_path": certPath,
 				"key_path":         keyPath,
 			},
+		}
+		// Server bandwidth switches QUIC from BBR to brutal; clients reporting their own rate get capped at these values.
+		for key, raw := range map[string]string{"up_mbps": settings.Hysteria2UpMbps, "down_mbps": settings.Hysteria2DownMbps} {
+			n, err := strconv.Atoi(strings.TrimSpace(raw))
+			if err == nil && n > 0 {
+				inbound[key] = n
+			}
 		}
 		if settings.Hysteria2Obfs != "" {
 			inbound["obfs"] = map[string]any{"type": "salamander", "password": settings.Hysteria2Obfs}

@@ -150,6 +150,8 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		RealityShortID:    get(store, "reality_short_id"),
 		Hysteria2Obfs:     get(store, "hysteria2_obfs"),
 		Hysteria2HopPorts: get(store, "hysteria2_hop_ports"),
+		Hysteria2UpMbps:   get(store, "hysteria2_up_mbps"),
+		Hysteria2DownMbps: get(store, "hysteria2_down_mbps"),
 		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
 		MTProtoTLSDomain:  get(store, "mtproto_tls_domain"),
 		TelegramProxyPort: get(store, "telegram_proxy_port"),
