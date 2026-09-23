@@ -13,8 +13,7 @@ import (
 	"github.com/rawizhere/uncut-core/internal/db"
 )
 
-// linkLabel builds the visible entry name: name-protocol[-tag].
-// Lives only in the URL fragment — clients never send it to the server.
+// linkLabel builds the visible entry name: name-protocol[-tag]. Lives only in the URL fragment — clients never send it to the server.
 func linkLabel(name, proto, tag string) string {
 	label := fmt.Sprintf("%s-%s", name, proto)
 	if IsValidTag(tag) {
@@ -48,19 +47,25 @@ func GenerateVLESSRealityLink(client config.Client, s config.Settings) string {
 	)
 }
 
-func GenerateTUICLink(client config.Client, s config.Settings) string {
-	port := s.TUICPort
-	if port == "" {
-		port = config.DefaultTUICPort
-	}
+func GenerateHysteria2Link(client config.Client, s config.Settings) string {
 	pass := client.Password
 	if pass == "" {
 		pass = client.UUID
 	}
-	return fmt.Sprintf(
-		"tuic://%s:%s@%s:%s?congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=0#%s",
-		client.UUID, pass, s.Domain, port, linkLabel(client.Name, "tuic", s.Tag),
-	)
+	link := fmt.Sprintf("hy2://%s@%s:443", pass, s.Domain)
+	// Obfs only when the node generated a password; params must match the inbound or the client hears silence.
+	if s.Hysteria2Obfs != "" {
+		link += "?obfs=salamander&obfs-password=" + s.Hysteria2Obfs
+	}
+	// mport only when the host has the DNAT range; a closed range would kill the whole link.
+	if s.Hysteria2HopPorts != "" {
+		sep := "?"
+		if strings.Contains(link, "?") {
+			sep = "&"
+		}
+		link += sep + "mport=" + s.Hysteria2HopPorts
+	}
+	return link + "#" + linkLabel(client.Name, "hysteria2", s.Tag)
 }
 
 func GenerateVLESSWSLink(client config.Client, s config.Settings) string {
@@ -106,10 +111,21 @@ func GenerateClientLinks(client config.Client, s config.Settings) []string {
 		serverProtoMap[strings.TrimSpace(p)] = true
 	}
 
-	clientProtos := append([]string(nil), client.Protocols...)
+	// Stored client rows predate the hysteria2 swap: normalize before matching, and rows may hold both the retired name and the replacement.
+	seen := make(map[string]bool, len(client.Protocols))
+	clientProtos := make([]string, 0, len(client.Protocols))
+	for _, cp := range client.Protocols {
+		if strings.TrimSpace(cp) == "tuic" {
+			cp = string(config.ProtoHysteria2)
+		}
+		if seen[cp] {
+			continue
+		}
+		seen[cp] = true
+		clientProtos = append(clientProtos, cp)
+	}
 	if !client.ProtocolsExplicit {
-		// Non-explicit lists are creation snapshots: they merge in new server
-		// protocols. Explicit is an allowlist — off stays off.
+		// Non-explicit lists are creation snapshots: they merge in new server protocols. Explicit is an allowlist — off stays off.
 		for _, sp := range activeServerProtos {
 			sp = strings.TrimSpace(sp)
 			if sp == "" {
@@ -141,8 +157,8 @@ func GenerateClientLinks(client config.Client, s config.Settings) []string {
 		switch proto {
 		case string(config.ProtoVLESSReality):
 			links = append(links, GenerateVLESSRealityLink(client, s))
-		case string(config.ProtoTUIC):
-			links = append(links, GenerateTUICLink(client, s))
+		case string(config.ProtoHysteria2):
+			links = append(links, GenerateHysteria2Link(client, s))
 		case string(config.ProtoVLESSWS):
 			links = append(links, GenerateVLESSWSLink(client, s))
 		case string(config.ProtoXHTTPStealth):

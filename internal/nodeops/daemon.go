@@ -20,8 +20,7 @@ import (
 	"github.com/rawizhere/uncut-core/internal/updater"
 )
 
-// mtprotoSpec builds one mtproto-proxy instance on the given listen/stats
-// pair; impersonateDomain turns it into the FakeTLS branch.
+// mtprotoSpec builds one mtproto-proxy instance on the given listen/stats pair; impersonateDomain turns it into the FakeTLS branch.
 func mtprotoSpec(settings *config.Settings, name, port, statsPort, impersonateDomain, logsDir string) supervisor.ProcessSpec {
 	args := []string{
 		"-u", "nobody",
@@ -47,14 +46,12 @@ func mtprotoSpec(settings *config.Settings, name, port, statsPort, impersonateDo
 	}
 }
 
-// mtProtoTLSSpec builds the FakeTLS instance: the same raw secret as the
-// plain instance, but -D impersonates the third-party domain.
+// mtProtoTLSSpec builds the FakeTLS instance: the same raw secret as the plain instance, but -D impersonates the third-party domain.
 func mtProtoTLSSpec(settings *config.Settings, logsDir string) supervisor.ProcessSpec {
 	return mtprotoSpec(settings, "mtproto-proxy-tls", "2399", "8889", settings.MTProtoTLSDomain, logsDir)
 }
 
-// syncMtProtoTLS reconciles the FakeTLS instance with the live setting:
-// set-mtproto-tls runs in another process and cannot reach the supervisor.
+// syncMtProtoTLS reconciles the FakeTLS instance with the live setting: set-mtproto-tls runs in another process and cannot reach the supervisor.
 func syncMtProtoTLS(ctx context.Context, sup *supervisor.Supervisor, store *db.Store, opts setup.Options) {
 	const name = "mtproto-proxy-tls"
 	last, _ := store.GetSetting("mtproto_tls_domain")
@@ -93,8 +90,7 @@ func syncMtProtoTLS(ctx context.Context, sup *supervisor.Supervisor, store *db.S
 	}
 }
 
-// Daemon supervises sing-box, nginx, mtproto-proxy and tproxy-server, with
-// ACME upkeep and a loopback probe endpoint.
+// Daemon supervises sing-box, nginx, mtproto-proxy and tproxy-server, with ACME upkeep and a loopback probe endpoint.
 func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts setup.Options) error {
 
 	settings, err := setup.Ensure(ctx, store, appCfg, opts)
@@ -118,8 +114,7 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 		Args:    []string{"-g", "daemon off;"},
 	})
 	sup.AddProcess(mtprotoSpec(&settings, "mtproto-proxy", "2398", "8888", "", logsDir))
-	// Second instance: -D would disable the plain transport the bridge needs.
-	// syncMtProtoTLS keeps it in step with the live setting later.
+	// Second instance: -D would disable the plain transport the bridge needs. syncMtProtoTLS keeps it in step with the live setting later.
 	if settings.MTProtoTLSDomain != "" {
 		sup.AddProcess(mtProtoTLSSpec(&settings, logsDir))
 	}
@@ -129,8 +124,7 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 		Args:    []string{"-config", filepath.Join(opts.InstallDir, "tproxy/config.json")},
 		LogPath: filepath.Join(logsDir, "tproxy-server.log"),
 	})
-	// CoreDNS serves the private DoH endpoint on loopback; nginx is the only
-	// client, so the endpoint adds no port on the node's face.
+	// CoreDNS serves the private DoH endpoint on loopback; nginx is the only client, so the endpoint adds no port on the node's face.
 	sup.AddProcess(supervisor.ProcessSpec{
 		Name:    "coredns",
 		Command: "coredns",
@@ -160,7 +154,7 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 	}()
 
 	go acmeMgr.Maintain(ctx, func() {
-		// Re-render (the ssl block exists only once a cert does, TUIC re-reads) — RebuildAll reloads both consumers.
+		// Re-render (the ssl block exists only once a cert does, Hysteria2 re-reads) — RebuildAll reloads both consumers.
 		if err := setup.RebuildAll(ctx, store, sup, opts); err != nil {
 			slog.Warn("Failed to rebuild configs after cert renewal", "error", err)
 		}
@@ -170,8 +164,7 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 		slog.Info("Telegram MTProxy configuration refreshed")
 	})
 
-	// change-domain runs in another process and cannot restart this daemon's
-	// tproxy child; watch the files and restart it when they actually change.
+	// change-domain runs in another process and cannot restart this daemon's tproxy child; watch the files and restart it when they actually change.
 	go watchTproxyConfig(ctx, sup, opts.InstallDir)
 	go syncMtProtoTLS(ctx, sup, store, opts)
 

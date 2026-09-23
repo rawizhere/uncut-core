@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,11 +24,6 @@ import (
 	"github.com/rawizhere/uncut-core/internal/tproxy"
 	"github.com/rawizhere/uncut-core/internal/transport"
 	"golang.org/x/crypto/curve25519"
-)
-
-const (
-	saltLength = 12
-	tokenChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
 
 type Options struct {
@@ -82,10 +76,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		"mtproto_raw_secret": func() (string, error) {
 			return randomHex(16)
 		},
-		"tuic_password": func() (string, error) {
-			return randomToken(16)
-		},
-		"tuic_uuid": func() (string, error) {
+		"hysteria2_obfs": func() (string, error) {
 			return randomHex(16)
 		},
 	}
@@ -96,7 +87,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	}
 
 	for key, fallback := range map[string]string{
-		"tuic_port":           config.DefaultTUICPort,
+		"hysteria2_hop_ports": config.Hysteria2HopPortsDefault,
 		"telegram_proxy_port": config.DefaultTelegramProxyPort,
 		"protocols":           strings.Join(stringProtocols(config.DefaultProtocols), ","),
 	} {
@@ -105,15 +96,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		}
 	}
 
-	// 8443 was the old default (closed firewall port), not a choice: migrate it; custom values stay.
-	if get(store, "tuic_port") == "8443" {
-		if err := store.SetSetting("tuic_port", config.DefaultTUICPort); err != nil {
-			return config.Settings{}, fmt.Errorf("tuic port upgrade: %w", err)
-		}
-	}
-
-	// Stored protocol lists are first-init snapshots, not choices: merge in
-	// new defaults or subscriptions omit them. Explicit lists stay alone.
+	// Stored protocol lists are first-init snapshots, not choices: merge in new defaults or subscriptions omit them. Explicit lists stay alone.
 	if err := mergeDefaultProtocols(store); err != nil {
 		return config.Settings{}, err
 	}
@@ -165,9 +148,8 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		RealityPrivKey:    get(store, "reality_private_key"),
 		RealityPubKey:     get(store, "reality_public_key"),
 		RealityShortID:    get(store, "reality_short_id"),
-		TUICPort:          get(store, "tuic_port"),
-		TUICPassword:      get(store, "tuic_password"),
-		TUICUUID:          get(store, "tuic_uuid"),
+		Hysteria2Obfs:     get(store, "hysteria2_obfs"),
+		Hysteria2HopPorts: get(store, "hysteria2_hop_ports"),
 		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
 		MTProtoTLSDomain:  get(store, "mtproto_tls_domain"),
 		TelegramProxyPort: get(store, "telegram_proxy_port"),
@@ -389,18 +371,6 @@ func randomHex(n int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func randomToken(n int) (string, error) {
-	buf := make([]byte, n)
-	for i := range buf {
-		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(tokenChars))))
-		if err != nil {
-			return "", err
-		}
-		buf[i] = tokenChars[idx.Int64()]
-	}
-	return string(buf), nil
-}
-
 func write(path string, data []byte, perm os.FileMode) error {
 	if err := renameio.WriteFile(path, data, perm); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
@@ -408,8 +378,7 @@ func write(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-// mergeDefaultProtocols appends post-init default protocols to non-explicit
-// lists; explicit lists stay alone (merging resurrected disabled protocols).
+// mergeDefaultProtocols appends post-init default protocols to non-explicit lists; explicit lists stay alone (merging resurrected disabled protocols).
 func mergeDefaultProtocols(store *db.Store) error {
 	defaults := stringProtocols(config.DefaultProtocols)
 

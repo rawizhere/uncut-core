@@ -1,5 +1,4 @@
-// Package transport holds the concrete transport facts on the wire: random
-// paths, gRPC name, reality SNI. Generated once, replaced only by rotation.
+// Package transport holds the concrete transport facts on the wire: random paths, gRPC name, reality SNI. Generated once, replaced only by rotation.
 package transport
 
 import (
@@ -119,8 +118,7 @@ func (t *Transport) SubURL(domain, hash string) string {
 	return "https://" + domain + t.SubPath(hash)
 }
 
-// SubLocation renders the nginx location that matches any per-client hash
-// inside the stored subscription wrapper.
+// SubLocation renders the nginx location that matches any per-client hash inside the stored subscription wrapper.
 func (t *Transport) SubLocation() string {
 	sub := t.fill().Sub
 	prefix, suffix, found := strings.Cut(sub, HashToken)
@@ -130,8 +128,7 @@ func (t *Transport) SubLocation() string {
 	return "^" + regexp.QuoteMeta(prefix) + "(" + SubHashPattern + ")" + regexp.QuoteMeta(suffix) + "$"
 }
 
-// DoHPath is the private DoH endpoint: the same random prefix the
-// subscription wrapper uses, so one secret guards both.
+// DoHPath is the private DoH endpoint: the same random prefix the subscription wrapper uses, so one secret guards both.
 func (t *Transport) DoHPath() string {
 	prefix, _, _ := strings.Cut(t.fill().Sub, HashToken)
 	return strings.TrimSuffix(prefix, "/") + "/dns-query"
@@ -165,8 +162,7 @@ func safe(s string) string {
 	}, s)
 }
 
-// randomSeg: one opaque alnum segment, 62^16 (~95 bits) — the single primitive
-// behind every transport fact: "/"+seg, gRPC bare seg, sub seg+"/"+hash+".bin".
+// randomSeg: one opaque alnum segment, 62^16 (~95 bits) — the single primitive behind every transport fact: "/"+seg, gRPC bare seg, sub seg+"/"+hash+".bin".
 func randomSeg() (string, error) {
 	seg, err := randomAlnum(16)
 	if err != nil {

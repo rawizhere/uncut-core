@@ -1,5 +1,4 @@
-// Package nodeops holds the node commands' business logic as plain functions
-// over (store, options); cmd/uncut keeps only flag parsing and output.
+// Package nodeops holds the node commands' business logic as plain functions over (store, options); cmd/uncut keeps only flag parsing and output.
 package nodeops
 
 import (
@@ -200,8 +199,7 @@ func InheritClientProtocols(ctx context.Context, store *db.Store, opts setup.Opt
 	return clientViewAfter(ctx, store, opts, client.UUID)
 }
 
-// SetMTProtoTLSDomain enables FakeTLS with a third-party domain to impersonate
-// (unique SNI, must answer 443); empty disables the branch.
+// SetMTProtoTLSDomain enables FakeTLS with a third-party domain to impersonate (unique SNI, must answer 443); empty disables the branch.
 func SetMTProtoTLSDomain(ctx context.Context, store *db.Store, opts setup.Options, domain string) (string, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	if domain == "" {
@@ -243,8 +241,7 @@ func SetMTProtoTLSDomain(ctx context.Context, store *db.Store, opts setup.Option
 	return domain, nil
 }
 
-// SetRealitySNI is transport data: it changes the rev, every subscription
-// re-issues, and the host must differ from the FakeTLS domain.
+// SetRealitySNI is transport data: it changes the rev, every subscription re-issues, and the host must differ from the FakeTLS domain.
 func SetRealitySNI(ctx context.Context, store *db.Store, opts setup.Options, host string) (string, error) {
 	host = strings.ToLower(strings.TrimSpace(host))
 	if host == "" {
@@ -350,7 +347,7 @@ func SyncIP(ctx context.Context, store *db.Store, opts setup.Options, forceIP st
 	return newIP, nil
 }
 
-// RenewCert forces issuance and reloads nginx + sing-box (TUIC).
+// RenewCert forces issuance and reloads nginx + sing-box (Hysteria2).
 func RenewCert(store *db.Store, opts setup.Options) error {
 	settings, err := setup.Load(store, opts)
 	if err != nil {
@@ -457,8 +454,7 @@ func RotatePaths(ctx context.Context, store *db.Store, opts setup.Options) (stri
 	return t.Rev(), nil
 }
 
-// SetProtocols replaces the server set; the explicit marker keeps the next
-// daemon start from merging defaults back (which resurrected disabled ones).
+// SetProtocols replaces the server set; the explicit marker keeps the next daemon start from merging defaults back (which resurrected disabled ones).
 func SetProtocols(ctx context.Context, store *db.Store, opts setup.Options, protocols []string) ([]string, error) {
 	var resolved []string
 	for _, p := range protocols {

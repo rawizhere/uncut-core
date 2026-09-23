@@ -1,53 +1,12 @@
 # AGENTS.md
 
-Facts an agent needs before changing or deploying this repository. The README
-explains the project; this file explains how work is done here.
+Facts an agent needs before deploying or reconfiguring a node. The README
+explains the project; this file explains installation and configuration.
 
 ## What this is
 
 One Go binary (`raw`) renders nginx, sing-box and tproxy configs from a local
 SQLite store, runs subscriptions and a TUI, and ships in one container.
-Everything on the box is driven by `raw`; there is no control plane.
-
-Config truth lives in the generators: `internal/nginx`, `internal/singbox`,
-`internal/tproxy`. Rendered files under `/opt/sing-box` are outputs — never
-hand-edit them, change the generator and rebuild.
-
-## Code
-
-- Verify before committing: `go build ./... && go vet ./... && gofmt -l .`.
-  No test suite exists; compilation and the linter are the gate.
-- Comments are single-line and state the constraint, not the obvious.
-- Commit messages: short, imperative, no prefixes.
-- `DefaultProtocols` exists in two places (`internal/config` and
-  `internal/core`) and must mirror; lag makes subscriptions omit protocols.
-- Go dependencies: pure-Go only (no cgo). `modernc.org/sqlite`, not mattn.
-
-## Protocol and subscription invariants
-
-- Subscription tokens are random per client. Never derive them from UUIDs or
-  static salts; a derived hash is predictable and unrotatable.
-- VLESS WS links carry no `ed=` parameter. Link converters drop
-  `early_data_header_name` and build a dead ws outbound. Do not reintroduce.
-- Transport paths are one random alnum segment per protocol, generated once
-  per node and stored in its DB. Do not add structure to them.
-- nginx transport locations match exact (`=`) or prefix on those paths;
-  a mismatch renders as nginx 404, not a transport error.
-- New protocol = five places, none optional: `internal/config` (enum,
-  defaults), `internal/singbox` (inbound), `internal/nginx` (location),
-  `internal/core/subscriptions.go` (link), `internal/links` if URL-shaped.
-  Links omit what the generators omit.
-- CA is Let's Encrypt only, challenge HTTP-01, port 80 must stay open.
-  No self-signed, no ZeroSSL, no Cloudflare API.
-
-## Breaking operations
-
-These kill issued client links. Only on explicit operator request:
-
-- `raw rotate-paths` — all transports, every link dies.
-- `raw change-domain` — new domain plus a fresh certificate.
-- `raw del`, `raw rotate-sub` — one client.
-- Reality SNI change, MTProto FakeTLS mask change.
 
 ## Deploying a node on a server
 
@@ -66,6 +25,8 @@ Then, in order:
     # 1. Firewall: SSH rule first, or you can lock yourself out.
     ufw allow <ssh-port>/tcp && ufw allow 80/tcp && \
       ufw allow 443/tcp && ufw allow 443/udp && ufw --force enable
+    # port hopping for Hysteria2 (also handled by install.sh on fresh deploys)
+    ufw allow 20000:30000/udp
 
     # 2. Previous release on the box? Remove all of it:
     docker compose down || docker rm -f uncut-node
@@ -102,17 +63,16 @@ It cannot see host-level ufw and fail2ban — those two are steps 1 and 4.
   Subscriptions regenerate on boot.
 - Re-running install.sh rewrites `.env` from flags — never use it to update.
 - fail2ban runs on the host, not in the container.
+- Hysteria2 port hopping: install.sh sets up the 20000:30000/udp ufw rule and
+  the DNAT onto 443 (netfilter-persistent persists it). On hosts installed
+  before hopping existed, add both by hand; `mport` in client links only works
+  with the DNAT in place.
 
-## Release
+## Breaking operations
 
-- Images build from `main` only; lint runs on every branch.
-- GHCR holds a single `latest` tag. Never push git tags.
-- sing-box extended version rides the `SINGBOX_EXT_VERSION` repo variable
-  with a Dockerfile fallback; MTProxy and tproxy-server are pinned to commits
-  in the Dockerfile — bump deliberately.
+These kill issued client links. Only on explicit operator request:
 
-## Public repository
-
-- No real server addresses, SSH ports, client names, domains, emails, or
-  credentials in code, docs, issues, or commits. Examples use
-  `node.example.com`. Node inventory belongs to the operator, not the repo.
+- `raw rotate-paths` — all transports, every link dies.
+- `raw change-domain` — new domain plus a fresh certificate.
+- `raw del`, `raw rotate-sub` — one client.
+- Reality SNI change, MTProto FakeTLS mask change.

@@ -32,8 +32,7 @@ var transportPorts = map[string]int{
 	string(config.ProtoVLESSReality):     8443,
 }
 
-// Doctor runs every check that is possible from inside the container.
-// Host-level facts (ufw, fail2ban) are out of scope here: they are runbook steps.
+// Doctor runs every check that is possible from inside the container. Host-level facts (ufw, fail2ban) are out of scope here: they are runbook steps.
 func Doctor(ctx context.Context, store *db.Store, opts setup.Options) []Check {
 	settings, err := setup.Load(store, opts)
 	if err != nil {
@@ -92,17 +91,10 @@ func checkPorts(settings config.Settings) []Check {
 		_ = conn.Close()
 		checks = append(checks, Check{Name: p.name, Pass: true, Detail: "accepting"})
 	}
-	if tuicPort(settings) != "" && !udpListens(tuicPort(settings)) {
-		checks = append(checks, Check{Name: "tuic udp", Pass: false, Detail: "port " + tuicPort(settings) + " not listening", Fix: "check sing-box logs"})
+	if slicesContains(settings.Protocols, string(config.ProtoHysteria2)) && !udpListens(config.Hysteria2Port) {
+		checks = append(checks, Check{Name: "hysteria2 udp", Pass: false, Detail: "port " + config.Hysteria2Port + " not listening", Fix: "check sing-box logs"})
 	}
 	return checks
-}
-
-func tuicPort(settings config.Settings) string {
-	if settings.TUICPort != "" {
-		return settings.TUICPort
-	}
-	return config.DefaultTUICPort
 }
 
 func checkCertificate(settings config.Settings, opts setup.Options) Check {
@@ -133,8 +125,8 @@ func checkTransports(ctx context.Context, settings config.Settings) []Check {
 		_ = conn.Close()
 		checks = append(checks, Check{Name: "transport " + proto, Pass: true, Detail: "accepting on 127.0.0.1:" + strconv.Itoa(port)})
 	}
-	if port := tuicPort(settings); slicesContains(settings.Protocols, string(config.ProtoTUIC)) && !udpListens(port) {
-		checks = append(checks, Check{Name: "transport tuic", Pass: false, Detail: "udp " + port + " not listening", Fix: "check sing-box logs"})
+	if slicesContains(settings.Protocols, string(config.ProtoHysteria2)) && !udpListens(config.Hysteria2Port) {
+		checks = append(checks, Check{Name: "transport hysteria2", Pass: false, Detail: "udp " + config.Hysteria2Port + " not listening", Fix: "check sing-box logs"})
 	}
 	return checks
 }

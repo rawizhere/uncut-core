@@ -14,8 +14,7 @@ type Store struct {
 	db *sql.DB
 }
 
-// nodeMigrations is the schema as versioned steps: v1 reproduces the original
-// CREATE TABLE block; schema edits append versions instead of editing v1.
+// nodeMigrations is the schema as versioned steps: v1 reproduces the original CREATE TABLE block; schema edits append versions instead of editing v1.
 var nodeMigrations = []storage.Migration{
 	{Version: 1, Statements: []string{`
 CREATE TABLE IF NOT EXISTS settings (

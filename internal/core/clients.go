@@ -61,7 +61,7 @@ func DefaultProtocols() []string {
 		string(config.ProtoVLESSHTTPUpgrade),
 		string(config.ProtoVLESSGRPC),
 		string(config.ProtoVLESSReality),
-		string(config.ProtoTUIC),
+		string(config.ProtoHysteria2),
 	}
 }
 

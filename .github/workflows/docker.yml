@@ -54,6 +54,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=3.2.0
-            SINGBOX_EXT_VERSION=${{ vars.SINGBOX_EXT_VERSION || '1.13.18-extended-2.6.5' }}
+            SINGBOX_EXT_VERSION=${{ vars.SINGBOX_EXT_VERSION || '1.14.1-extended-2.7.2' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
