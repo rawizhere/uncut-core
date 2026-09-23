@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -162,36 +161,29 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			},
 		}, nil
 
-	case string(config.ProtoTUIC):
-		users := filterTUICUsers(clients, proto)
-		port := 8443 // matches config.DefaultTUICPort
-		if settings.TUICPort != "" {
-			if p, err := strconv.Atoi(settings.TUICPort); err == nil {
-				port = p
-			}
-		}
-
+	case string(config.ProtoHysteria2):
+		users := filterHysteria2Users(clients, proto)
 		domain := settings.Domain
 		certPath := filepath.Join(installDir, "certs", "certificates", domain+".crt")
 		keyPath := filepath.Join(installDir, "certs", "certificates", domain+".key")
 
-		return map[string]any{
-			"type":               "tuic",
-			"tag":                "tuic",
-			"listen":             "0.0.0.0",
-			"listen_port":        port,
-			"users":              users,
-			"congestion_control": "bbr",
-			"auth_timeout":       "3s",
-			"zero_rtt_handshake": true,
-			"heartbeat":          "10s",
+		// sing-box requires a tls block even though the transport is QUIC; the LE cert keeps client verification honest.
+		inbound := map[string]any{
+			"type":        "hysteria2",
+			"tag":         "hysteria2",
+			"listen":      "0.0.0.0",
+			"listen_port": 443,
+			"users":       users,
 			"tls": map[string]any{
 				"enabled":          true,
-				"alpn":             []string{"h3"},
 				"certificate_path": certPath,
 				"key_path":         keyPath,
 			},
-		}, nil
+		}
+		if settings.Hysteria2Obfs != "" {
+			inbound["obfs"] = map[string]any{"type": "salamander", "password": settings.Hysteria2Obfs}
+		}
+		return inbound, nil
 	}
 
 	return nil, nil
@@ -233,7 +225,7 @@ func filterRealityUsers(clients []config.Client, proto string) []map[string]stri
 	return users
 }
 
-func filterTUICUsers(clients []config.Client, proto string) []map[string]string {
+func filterHysteria2Users(clients []config.Client, proto string) []map[string]string {
 	users := make([]map[string]string, 0)
 	for _, c := range clients {
 		if c.UUID != "" && clientHasProto(c, proto) {
@@ -241,11 +233,7 @@ func filterTUICUsers(clients []config.Client, proto string) []map[string]string 
 			if pass == "" {
 				pass = c.UUID
 			}
-			users = append(users, map[string]string{
-				"uuid":     c.UUID,
-				"password": pass,
-				"name":     c.Name,
-			})
+			users = append(users, map[string]string{"password": pass})
 		}
 	}
 	return users

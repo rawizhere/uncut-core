@@ -231,8 +231,7 @@ func GenerateLocationsConfig(opts GeneratorOptions) string {
 	return sb.String()
 }
 
-// GenerateStreamConfig splits TCP 443 by SNI: reality → 8443, FakeTLS → its
-// instance, else → https. A tls domain equal to the reality SNI is an error.
+// GenerateStreamConfig splits TCP 443 by SNI: reality → 8443, FakeTLS → its instance, else → https. A tls domain equal to the reality SNI is an error.
 func GenerateStreamConfig(opts GeneratorOptions) (string, error) {
 	opts.normalize()
 	sni := strings.ToLower(strings.TrimSpace(opts.RealityServerName))
@@ -251,9 +250,7 @@ func GenerateStreamConfig(opts GeneratorOptions) (string, error) {
 	}
 	fmt.Fprintf(&mapBody, "        default 127.0.0.1:%d;\n", NginxHTTPSBackendPort)
 
-	body := `# SNI splitter: TCP 443 is fanned out by TLS server name. Reality traffic
-# (sing-box), the optional MTProxy FakeTLS branch and the https server share
-# one public port; UDP 443 stays with TUIC - the stream module is TCP only.
+	body := `# SNI splitter: TCP 443 is fanned out by TLS server name. Reality (sing-box), the optional MTProxy FakeTLS branch and the https server share one public port; UDP 443 stays with Hysteria2 - the stream module is TCP only.
 stream {
     map $ssl_preread_server_name $uncut_tls_backend {
 ` + mapBody.String() + `    }
@@ -289,8 +286,7 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 		}
 	}
 
-	// HTTP-01 needs nginx up, but the ssl server needs a cert — render 443
-	// only once the files exist; Maintain re-renders after issuance.
+	// HTTP-01 needs nginx up, but the ssl server needs a cert — render 443 only once the files exist; Maintain re-renders after issuance.
 	certful := true
 	if _, err := os.Stat(filepath.Join(installDir, "certs", "certificates", domain+".crt")); err != nil {
 		certful = false
@@ -318,8 +314,7 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 	return sb.String()
 }
 
-// serverTemplate renders the whole server config: the xhttp upstream and the
-// 80/8442 head always; the 443 server only once the certificate files exist.
+// serverTemplate renders the whole server config: the xhttp upstream and the 80/8442 head always; the 443 server only once the certificate files exist.
 var serverTemplate = template.Must(template.New("uncut").Parse(`{{if .XHTTPUpstream}}upstream xhttp_backend {
     server 127.0.0.1:10002;
     keepalive 64;
@@ -365,7 +360,7 @@ server {
 }
 
 {{if .Cert}}server {
-    # TCP 443 is owned by the stream splitter; nginx sits on loopback, no QUIC (UDP 443 belongs to TUIC).
+    # TCP 443 is owned by the stream splitter; nginx sits on loopback, no QUIC (UDP 443 belongs to Hysteria2).
     listen 127.0.0.1:8442 ssl;
     http2 on;
     server_name {{.Domain}};
@@ -385,8 +380,7 @@ server {
     ssl_session_tickets on;
     ssl_stapling on;
     ssl_stapling_verify on;
-    # OCSP stapling needs a resolver to fetch issuer status; without it nginx
-    # logs warnings and serves no stapled response.
+    # OCSP stapling needs a resolver to fetch issuer status; without it nginx logs warnings and serves no stapled response.
     resolver 1.1.1.1 8.8.8.8 valid=300s;
     resolver_timeout 5s;
 
@@ -432,8 +426,7 @@ server {
         proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        # tproxy takes one address and rejects a list, so the appending form
-        # would make a client arriving with its own header lose the bridge.
+        # tproxy takes one address and rejects a list, so the appending form would make a client arriving with its own header lose the bridge.
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 60s;
@@ -441,8 +434,7 @@ server {
     }
 
     location = / {
-        # proxy_set_header at location level only; bridge if-block inherits them:
-        # Host pins tproxy, X-Forwarded-For stays single-address.
+        # proxy_set_header at location level only; bridge if-block inherits them: Host pins tproxy, X-Forwarded-For stays single-address.
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $remote_addr;
         if ($arg_bridge != "") {
@@ -459,8 +451,7 @@ server {
 }
 {{end}}`))
 
-// serverData carries every named field the server template renders; the named
-// form kills the positional-argument bug class the Sprintf chain had.
+// serverData carries every named field the server template renders; the named form kills the positional-argument bug class the Sprintf chain had.
 type serverData struct {
 	XHTTPUpstream bool
 	Cert          bool

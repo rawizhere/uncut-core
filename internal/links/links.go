@@ -30,8 +30,7 @@ func BridgeURL(domain, secretHex string) string {
 	return fmt.Sprintf("https://%s/?bridge=%s", domain, cap)
 }
 
-// MTProtoFakeTLSSecret: the ee tag (TLS transport, random padding) + raw
-// 16-byte secret + hex of the impersonated domain.
+// MTProtoFakeTLSSecret: the ee tag (TLS transport, random padding) + raw 16-byte secret + hex of the impersonated domain.
 func MTProtoFakeTLSSecret(raw, tlsDomain string) string {
 	return "ee" + raw + hex.EncodeToString([]byte(tlsDomain))
 }
@@ -46,8 +45,7 @@ func TMeProxyURL(fqdn, secret string) string {
 	return fmt.Sprintf("https://t.me/proxy?server=%s&port=443&secret=%s", fqdn, secret)
 }
 
-// WebProxyMarkedSecret frames the raw MTProxy secret the tproxy deploy way:
-// one 0x70 marker byte + the 16 raw bytes, base64url (their deploy rule).
+// WebProxyMarkedSecret frames the raw MTProxy secret the tproxy deploy way: one 0x70 marker byte + the 16 raw bytes, base64url (their deploy rule).
 func WebProxyMarkedSecret(rawHex string) string {
 	decoded, err := hex.DecodeString(strings.TrimSpace(rawHex))
 	if err != nil || len(decoded) != 16 {
@@ -56,8 +54,7 @@ func WebProxyMarkedSecret(rawHex string) string {
 	return base64.RawURLEncoding.EncodeToString(append([]byte{0x70}, decoded...))
 }
 
-// WebProxyURL is the tg://webproxy link for the tproxy bridge; the client
-// derives the bridge capability locally from the secret.
+// WebProxyURL is the tg://webproxy link for the tproxy bridge; the client derives the bridge capability locally from the secret.
 func WebProxyURL(domain, rawHex string) string {
 	marked := WebProxyMarkedSecret(rawHex)
 	if marked == "" {

@@ -1,5 +1,4 @@
-// Package storage gives every uncut database one sqlite Open: WAL, 0600,
-// migrations keyed off PRAGMA user_version.
+// Package storage gives every uncut database one sqlite Open: WAL, 0600, migrations keyed off PRAGMA user_version.
 package storage
 
 import (

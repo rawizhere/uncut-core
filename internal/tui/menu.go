@@ -38,8 +38,7 @@ func NewMenu(store *db.Store, sup *supervisor.Supervisor, installDir string) *Me
 	}
 }
 
-// loaded reads the settings once and keeps them; rebuildAndReload drops the
-// cache so screens never show a stale copy after a rebuild.
+// loaded reads the settings once and keeps them; rebuildAndReload drops the cache so screens never show a stale copy after a rebuild.
 func (m *Menu) loaded() *config.Settings {
 	if m.settings != nil {
 		return m.settings
@@ -363,8 +362,8 @@ func (m *Menu) manageProtocols(ctx context.Context) {
 		switch p {
 		case config.ProtoVLESSReality:
 			label = "VLESS Reality (:443 TCP via SNI split)"
-		case config.ProtoTUIC:
-			label = "TUIC v5 (:443 UDP)"
+		case config.ProtoHysteria2:
+			label = "Hysteria2 (:443 UDP)"
 		case config.ProtoXHTTPStealth:
 			label = "VLESS XHTTP Stealth (:443 TCP via Nginx)"
 		case config.ProtoVLESSWS:

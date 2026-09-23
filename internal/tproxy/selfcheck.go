@@ -24,8 +24,7 @@ const (
 	backendDialTimeout  = 3 * time.Second
 )
 
-// CheckBridge: a rejection answers 200 with the empty stub either way, so only
-// the node can tell whether the bridge is real.
+// CheckBridge: a rejection answers 200 with the empty stub either way, so only the node can tell whether the bridge is real.
 func CheckBridge(ctx context.Context, domain, secret string) error {
 	capability := links.DeriveCapability(domain, secret)
 	if capability == "" {
@@ -54,8 +53,7 @@ func CheckBridge(ctx context.Context, domain, secret string) error {
 	return fmt.Errorf("bridge unreachable on %s: %w", target, lastErr)
 }
 
-// CheckBackend: the page renders identically with a dead backend, so the
-// symptom is invisible until a client actually connects.
+// CheckBackend: the page renders identically with a dead backend, so the symptom is invisible until a client actually connects.
 func CheckBackend(ctx context.Context, backend string) error {
 	if backend == "" {
 		backend = DefaultBackend

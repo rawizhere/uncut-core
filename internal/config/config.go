@@ -56,7 +56,7 @@ const (
 	ProtoVLESSHTTPUpgrade InboundProtocol = "vless-httpupgrade"
 	ProtoVLESSGRPC        InboundProtocol = "vless-grpc"
 	ProtoVLESSReality     InboundProtocol = "vless-reality"
-	ProtoTUIC             InboundProtocol = "tuic"
+	ProtoHysteria2        InboundProtocol = "hysteria2"
 )
 
 var DefaultProtocols = []InboundProtocol{
@@ -65,7 +65,7 @@ var DefaultProtocols = []InboundProtocol{
 	ProtoVLESSHTTPUpgrade,
 	ProtoVLESSGRPC,
 	ProtoVLESSReality,
-	ProtoTUIC,
+	ProtoHysteria2,
 }
 
 var ValidProtocols = []InboundProtocol{
@@ -74,7 +74,7 @@ var ValidProtocols = []InboundProtocol{
 	ProtoVLESSHTTPUpgrade,
 	ProtoVLESSGRPC,
 	ProtoVLESSReality,
-	ProtoTUIC,
+	ProtoHysteria2,
 }
 
 func IsValidProtocol(p string) bool {
@@ -91,6 +91,10 @@ func ResolveProtocols(raw []string) []string {
 	out := make([]string, 0, len(raw))
 	for _, p := range raw {
 		p = strings.TrimSpace(p)
+		// tuic rows predate the hysteria2 swap; map them so stored client lists keep working.
+		if p == "tuic" {
+			p = string(ProtoHysteria2)
+		}
 		if p == "" || seen[p] || !IsValidProtocol(p) {
 			continue
 		}
@@ -118,17 +122,18 @@ type Client struct {
 }
 
 type Settings struct {
-	Domain            string   `json:"domain,omitempty"`
-	IP                string   `json:"ip,omitempty"`
-	Tag               string   `json:"tag,omitempty"`
-	Email             string   `json:"email,omitempty"`
-	RealityPrivKey    string   `json:"reality_priv_key,omitempty"`
-	RealityPubKey     string   `json:"reality_pub_key,omitempty"`
-	RealityShortID    string   `json:"reality_short_id,omitempty"`
-	RealityServerName string   `json:"reality_server_name,omitempty"`
-	TUICPort          string   `json:"tuic_port,omitempty"`
-	TUICPassword      string   `json:"tuic_password,omitempty"`
-	TUICUUID          string   `json:"tuic_uuid,omitempty"`
+	Domain            string `json:"domain,omitempty"`
+	IP                string `json:"ip,omitempty"`
+	Tag               string `json:"tag,omitempty"`
+	Email             string `json:"email,omitempty"`
+	RealityPrivKey    string `json:"reality_priv_key,omitempty"`
+	RealityPubKey     string `json:"reality_pub_key,omitempty"`
+	RealityShortID    string `json:"reality_short_id,omitempty"`
+	RealityServerName string `json:"reality_server_name,omitempty"`
+	// Hysteria2Obfs: salamander obfs password; empty renders no obfs block.
+	Hysteria2Obfs string `json:"hysteria2_obfs,omitempty"`
+	// Hysteria2HopPorts: client port-hopping range; set only when the host DNATs it onto 443.
+	Hysteria2HopPorts string   `json:"hysteria2_hop_ports,omitempty"`
 	Protocols         []string `json:"protocols,omitempty"`
 	InstallDir        string   `json:"install_dir,omitempty"`
 	SubsDir           string   `json:"subs_dir,omitempty"`
@@ -143,9 +148,10 @@ type Settings struct {
 const (
 	DefaultDomain = "node.example.com"
 	DefaultSNI    = "dl.google.com"
-	// TUIC owns UDP 443 (the splitter is TCP-only); 8443 stays loopback.
-	// Changing this invalidates existing TUIC links: re-issue.
-	DefaultTUICPort          = "443"
+	// Hysteria2 owns UDP 443 (the splitter is TCP-only); 8443 stays loopback.
+	Hysteria2Port = "443"
+	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.
+	Hysteria2HopPortsDefault = "20000:30000"
 	DefaultTelegramProxyPort = "8080"
 	DefaultSubsDir           = "/var/www/cdn/subs"
 	DefaultWebRoot           = "/var/www/html"

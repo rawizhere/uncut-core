@@ -25,8 +25,7 @@ type ManagedProcess struct {
 	Spec    ProcessSpec
 	Cmd     *exec.Cmd
 	Running bool
-	// Stopped marks an operator-requested stop: the monitor reaps but does
-	// not restart, so a disabled process stays down.
+	// Stopped marks an operator-requested stop: the monitor reaps but does not restart, so a disabled process stays down.
 	Stopped bool
 	Started time.Time
 	Backoff time.Duration
@@ -69,8 +68,7 @@ func (s *Supervisor) StartAll() {
 }
 
 func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
-	// One live process per ManagedProcess: a blind start here spawns a
-	// duplicate that dies on a busy bind and restarts forever.
+	// One live process per ManagedProcess: a blind start here spawns a duplicate that dies on a busy bind and restarts forever.
 	if mp.Running {
 		return
 	}
@@ -103,8 +101,7 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 	mp.Started = time.Now()
 	slog.Info("Started managed process", "process", name, "pid", cmd.Process.Pid)
 
-	// The monitor waits on ITS OWN cmd exactly once, then hands the restart to
-	// startProcess: looping Wait on the reaped cmd cascades duplicate starts.
+	// The monitor waits on ITS OWN cmd exactly once, then hands the restart to startProcess: looping Wait on the reaped cmd cascades duplicate starts.
 	cmdLocal := cmd
 	go func(n string, proc *ManagedProcess) {
 		_ = cmdLocal.Wait()
@@ -155,8 +152,7 @@ func (s *Supervisor) ReloadSingBox() error {
 	return mp.Cmd.Process.Signal(syscall.SIGHUP)
 }
 
-// ReplaceSpec swaps the args of the named process in place (keeping its live
-// state), or registers a new one; pair it with RestartProcess to apply.
+// ReplaceSpec swaps the args of the named process in place (keeping its live state), or registers a new one; pair it with RestartProcess to apply.
 func (s *Supervisor) ReplaceSpec(name string, spec ProcessSpec) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -201,8 +197,7 @@ func (s *Supervisor) RestartProcess(name string) error {
 	}
 	s.mu.Unlock()
 
-	// Wait for the monitor goroutine to reap the old process instead of a
-	// blind sleep: starting earlier races the monitor's own restart.
+	// Wait for the monitor goroutine to reap the old process instead of a blind sleep: starting earlier races the monitor's own restart.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		s.mu.Lock()
