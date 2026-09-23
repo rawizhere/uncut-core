@@ -87,6 +87,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	}
 
 	for key, fallback := range map[string]string{
+		"hysteria2_hop_ports": config.Hysteria2HopPortsDefault,
 		"telegram_proxy_port": config.DefaultTelegramProxyPort,
 		"protocols":           strings.Join(stringProtocols(config.DefaultProtocols), ","),
 	} {
@@ -148,6 +149,7 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		RealityPubKey:     get(store, "reality_public_key"),
 		RealityShortID:    get(store, "reality_short_id"),
 		Hysteria2Obfs:     get(store, "hysteria2_obfs"),
+		Hysteria2HopPorts: get(store, "hysteria2_hop_ports"),
 		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
 		MTProtoTLSDomain:  get(store, "mtproto_tls_domain"),
 		TelegramProxyPort: get(store, "telegram_proxy_port"),

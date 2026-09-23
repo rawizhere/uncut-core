@@ -111,7 +111,19 @@ func GenerateClientLinks(client config.Client, s config.Settings) []string {
 		serverProtoMap[strings.TrimSpace(p)] = true
 	}
 
-	clientProtos := append([]string(nil), client.Protocols...)
+	// Stored client rows predate the hysteria2 swap: normalize before matching, and rows may hold both the retired name and the replacement.
+	seen := make(map[string]bool, len(client.Protocols))
+	clientProtos := make([]string, 0, len(client.Protocols))
+	for _, cp := range client.Protocols {
+		if strings.TrimSpace(cp) == "tuic" {
+			cp = string(config.ProtoHysteria2)
+		}
+		if seen[cp] {
+			continue
+		}
+		seen[cp] = true
+		clientProtos = append(clientProtos, cp)
+	}
 	if !client.ProtocolsExplicit {
 		// Non-explicit lists are creation snapshots: they merge in new server protocols. Explicit is an allowlist — off stays off.
 		for _, sp := range activeServerProtos {
