@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,11 +24,6 @@ import (
 	"github.com/rawizhere/uncut-core/internal/tproxy"
 	"github.com/rawizhere/uncut-core/internal/transport"
 	"golang.org/x/crypto/curve25519"
-)
-
-const (
-	saltLength = 12
-	tokenChars = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
 
 type Options struct {
@@ -373,18 +367,6 @@ func randomHex(n int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
-}
-
-func randomToken(n int) (string, error) {
-	buf := make([]byte, n)
-	for i := range buf {
-		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(tokenChars))))
-		if err != nil {
-			return "", err
-		}
-		buf[i] = tokenChars[idx.Int64()]
-	}
-	return string(buf), nil
 }
 
 func write(path string, data []byte, perm os.FileMode) error {
