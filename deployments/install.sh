@@ -48,6 +48,13 @@ if ! docker compose version >/dev/null 2>&1; then
 	exit 1
 fi
 
+# Time sync on the host: a clock that drifts or jumps wedges sing-box timers and the node serves dead transports while every process looks alive.
+if ! systemctl is-active --quiet chrony 2>/dev/null && ! systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
+	echo "==> enabling time sync"
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chrony >/dev/null 2>&1 || true
+	systemctl enable --now chrony 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
+fi
+
 # Hysteria2 port hopping: a UDP range DNATs onto 443; the range is dead weight until sing-box answers there, so it is safe to set up early.
 if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
 	ufw allow 20000:30000/udp >/dev/null

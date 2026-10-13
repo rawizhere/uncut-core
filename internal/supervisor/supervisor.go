@@ -2,9 +2,11 @@ package supervisor
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +21,10 @@ type ProcessSpec struct {
 	Args    []string
 	Dir     string
 	LogPath string
+	// ProbeAddr: optional loopback address for a TLS liveness probe; empty disables probing.
+	ProbeAddr string
+	// ProbeSNI: ServerName for the probe handshake.
+	ProbeSNI string
 }
 
 type ManagedProcess struct {
@@ -29,6 +35,8 @@ type ManagedProcess struct {
 	Stopped bool
 	Started time.Time
 	Backoff time.Duration
+	// ProbeFails: consecutive failed liveness probes; at 3 the process is killed so the monitor restarts it.
+	ProbeFails int
 }
 
 type Supervisor struct {
@@ -40,11 +48,13 @@ type Supervisor struct {
 
 func New() *Supervisor {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Supervisor{
+	s := &Supervisor{
 		processes: make(map[string]*ManagedProcess),
 		ctx:       ctx,
 		cancel:    cancel,
 	}
+	go s.watchProbes()
+	return s
 }
 
 func (s *Supervisor) AddProcess(spec ProcessSpec) {
@@ -98,6 +108,7 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 
 	mp.Cmd = cmd
 	mp.Running = true
+	mp.ProbeFails = 0
 	mp.Started = time.Now()
 	slog.Info("Started managed process", "process", name, "pid", cmd.Process.Pid)
 
@@ -224,13 +235,64 @@ func (s *Supervisor) ReloadNginx() error {
 	return cmd.Run()
 }
 
+// watchProbes kills processes that stopped serving: restart-on-exit cannot see a hung process, a TLS handshake can.
+func (s *Supervisor) watchProbes() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		type target struct {
+			name string
+			mp   *ManagedProcess
+		}
+		s.mu.Lock()
+		var targets []target
+		for name, mp := range s.processes {
+			if mp.Spec.ProbeAddr != "" && mp.Running && mp.Cmd != nil && mp.Cmd.Process != nil {
+				targets = append(targets, target{name, mp})
+			}
+		}
+		s.mu.Unlock()
+
+		for _, t := range targets {
+			ok := probeTLS(t.mp.Spec.ProbeAddr, t.mp.Spec.ProbeSNI)
+			s.mu.Lock()
+			if ok {
+				t.mp.ProbeFails = 0
+			} else if t.mp.Running && t.mp.ProbeFails < 3 {
+				t.mp.ProbeFails++
+				if t.mp.ProbeFails == 3 {
+					slog.Warn("Liveness probe failed repeatedly, killing process", "process", t.name, "addr", t.mp.Spec.ProbeAddr)
+					_ = t.mp.Cmd.Process.Kill()
+				}
+			}
+			s.mu.Unlock()
+		}
+	}
+}
+
+func probeTLS(addr, sni string) bool {
+	d := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := tls.DialWithDialer(&d, "tcp", addr, &tls.Config{ServerName: sni, InsecureSkipVerify: true})
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
 func (s *Supervisor) GetStatus() map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	status := make(map[string]bool)
 	for name, mp := range s.processes {
-		status[name] = mp.Running
+		status[name] = mp.Running && mp.ProbeFails < 3
 	}
 	return status
 }

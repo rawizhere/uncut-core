@@ -102,12 +102,21 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 	_ = os.MkdirAll(logsDir, 0o755)
 
 	sup := supervisor.New()
-	sup.AddProcess(supervisor.ProcessSpec{
+	sbSpec := supervisor.ProcessSpec{
 		Name:    "sing-box",
 		Command: updater.SingBoxBin(opts.InstallDir),
 		Args:    []string{"run", "-c", filepath.Join(opts.InstallDir, "config.json")},
 		LogPath: filepath.Join(logsDir, "sing-box.log"),
-	})
+	}
+	// Probe through the reality inbound: a hung sing-box still shows in the process table, only a TLS handshake tells a serving one.
+	for _, p := range settings.Protocols {
+		if p == string(config.ProtoVLESSReality) {
+			sbSpec.ProbeAddr = "127.0.0.1:8443"
+			sbSpec.ProbeSNI = settings.RealityServerName
+			break
+		}
+	}
+	sup.AddProcess(sbSpec)
 	sup.AddProcess(supervisor.ProcessSpec{
 		Name:    "nginx",
 		Command: "nginx",
