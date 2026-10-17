@@ -48,25 +48,6 @@ if ! docker compose version >/dev/null 2>&1; then
 	exit 1
 fi
 
-# Time sync on the host: a clock that drifts or jumps wedges sing-box timers and the node serves dead transports while every process looks alive.
-if ! systemctl is-active --quiet chrony 2>/dev/null && ! systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
-	echo "==> enabling time sync"
-	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chrony >/dev/null 2>&1 || true
-	systemctl enable --now chrony 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
-fi
-
-# Hysteria2 port hopping: a UDP range DNATs onto 443; the range is dead weight until sing-box answers there, so it is safe to set up early.
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
-	ufw allow 20000:30000/udp >/dev/null
-fi
-if ! iptables -t nat -C PREROUTING -p udp --dport 20000:30000 -j REDIRECT --to-ports 443 2>/dev/null; then
-	iptables -t nat -A PREROUTING -p udp --dport 20000:30000 -j REDIRECT --to-ports 443
-fi
-if ! command -v netfilter-persistent >/dev/null 2>&1; then
-	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent >/dev/null
-fi
-netfilter-persistent save >/dev/null
-
 # The compose bind volumes need the device dirs before the first up.
 mkdir -p "$DIR/data" "$DIR/install"
 
@@ -79,25 +60,11 @@ else
 	git clone --depth 1 --branch "$REF" https://github.com/rawizhere/uncut-core "$SRC"
 fi
 
-# fail2ban on the host: honeypot bans (one probe 404 -> 24h) and nginx rate-limit bans. apt-based systems only; jails live in deployments/fail2ban.
+# Host layer: time sync, ufw, port hopping, fail2ban (apt systems).
 if command -v apt-get >/dev/null 2>&1; then
-	echo "==> installing fail2ban"
-	apt-get update -qq
-	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fail2ban
-	mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d "$DIR/data/logs/nginx"
-	cp "$SRC/deployments/fail2ban/filter.d/uncut-honeypot.conf" /etc/fail2ban/filter.d/
-	cp "$SRC/deployments/fail2ban/jail.d/uncut-nginx.local" /etc/fail2ban/jail.d/
-	# The package default enables the sshd jail — but it bans port 22 only. Pin the real port when SSH moved off 22, or the brute-force ban hits nothing.
-	SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
-	if [ -z "$SSH_PORT" ]; then
-		SSH_PORT=$(awk '/^Port /{print $2; exit}' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null)
-	fi
-	if [ -n "$SSH_PORT" ] && [ "$SSH_PORT" != "22" ]; then
-		printf '[sshd]\nport = %s\n' "$SSH_PORT" > /etc/fail2ban/jail.d/sshd-port.local
-	fi
-	systemctl enable --now fail2ban 2>/dev/null || service fail2ban restart 2>/dev/null || true
+	REF=$REF sh "$SRC/deployments/host.sh"
 else
-	echo "fail2ban: apt-get not found, skipping (jails are in deployments/fail2ban)"
+	echo "apt-get not found: set up ufw, the UDP 20000:30000 redirect and fail2ban by hand (see deployments/host.sh)" >&2
 fi
 
 # Best-effort sanity: the domain should resolve to this host's public address.
@@ -142,11 +109,6 @@ if [ $i -ge 120 ]; then
 fi
 
 echo "node is up."
-
-# The node just created the nginx log files fail2ban jails watch: a first-start fail2ban came up before they existed and silently skipped the uncut jails.
-if systemctl is-active --quiet fail2ban 2>/dev/null; then
-	systemctl restart fail2ban
-fi
 
 echo "next steps:"
 echo "  docker exec uncut-node raw info                 # revision, cert expiry, proxy links"

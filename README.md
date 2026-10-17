@@ -120,10 +120,11 @@ page is unreachable without the secret. `raw menu` prints the link.
   `/healthz`; it does not touch the public 443 listener.
 - `deployments/install.sh` is the one-command bootstrap the README deploy
   section pipes curl into.
-- `deployments/fail2ban` bans on the first 404 from a known probe path;
-  `install.sh` installs and enables it on the host (apt systems). The package
-  default sshd jail covers SSH brute force; `install.sh` pins its port when
-  SSH runs off 22.
+- `deployments/host.sh` sets up the host side (ufw, Hysteria2 port hopping,
+  fail2ban, time sync); `install.sh` runs it, and it is safe to re-run.
+- `deployments/fail2ban` bans on the first 404 from a known probe path. The
+  package default sshd jail covers SSH brute force; `host.sh` pins its port
+  when SSH runs off 22.
 - `deployments/logrotate.conf` rotates the nginx and process logs (daily, 14 kept, compressed).
 - Back up `/opt/uncut/data` (SQLite) and `/opt/uncut/install` (the host path of
   the `/opt/sing-box` volume: keys, certs, generated configs). Losing
