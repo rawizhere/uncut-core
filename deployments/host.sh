@@ -39,6 +39,12 @@ for rule in "$SSH_PORT/tcp" 80/tcp 443/tcp 443/udp "$HOP/udp"; do
 	ufw allow "$rule" >/dev/null
 done
 ufw --force enable >/dev/null
+# On a host where this run just installed ufw, enable sometimes does not take; retry once and fail loudly rather than leave the node unprotected.
+if ! ufw status | grep -q "Status: active"; then
+	ufw disable >/dev/null
+	ufw --force enable >/dev/null
+fi
+ufw status | grep -q "Status: active" || { echo "ufw did not activate" >&2; exit 1; }
 
 cat > /etc/systemd/system/uncut-hop.service <<EOF
 [Unit]
