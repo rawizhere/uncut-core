@@ -47,29 +47,20 @@ RUN git clone https://github.com/telegramdesktop/tproxy-server.git /tmp/tproxy-s
 # Final Runtime Image based on Debian Slim
 FROM public.ecr.aws/docker/library/debian:bookworm-slim
 
-# nginx: mainline from nginx.org - Debian bookworm only ships 1.22 without
-# QUIC, and HTTP/3 needs >=1.25 (listen 443 quic). Everything else stays on the distro packages.
+# nginx: mainline from nginx.org - Debian bookworm ships 1.22, and the https
+# server needs `http2 on;` (>=1.25.1). No QUIC: UDP 443 belongs to Hysteria2.
+# apt reads the armored .asc key directly, so gnupg is not needed. procps: pkill
+# reloads sing-box; curl: healthcheck; cron + logrotate: nginx log rotation.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
     curl \
-    gnupg2 \
-    jq \
-    bind9-dnsutils \
-    iputils-ping \
-    socat \
-    iproute2 \
-    openssl \
-    openssh-client \
     zlib1g \
     logrotate \
     cron \
     procps \
-    tar \
-    gzip \
-    && mkdir -p /etc/apt/keyrings \
-    && curl -fsSL https://nginx.org/keys/nginx_signing.key | gpg --dearmor -o /etc/apt/keyrings/nginx.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nginx.gpg] https://nginx.org/packages/mainline/debian bookworm nginx" > /etc/apt/sources.list.d/nginx.list \
+    && curl -fsSL https://nginx.org/keys/nginx_signing.key -o /etc/apt/keyrings/nginx.asc \
+    && echo "deb [signed-by=/etc/apt/keyrings/nginx.asc] https://nginx.org/packages/mainline/debian bookworm nginx" > /etc/apt/sources.list.d/nginx.list \
     && apt-get update && apt-get install -y --no-install-recommends nginx \
     && rm -rf /var/lib/apt/lists/*
 
@@ -88,7 +79,7 @@ RUN mkdir -p /etc/mtproxy \
 
 # Install Sing-Box Extended release. Pinned on purpose: the fleet runs one
 # version and nodes are upgraded by hand, never by rebuilding against latest.
-ARG SINGBOX_EXT_VERSION=1.14.1-extended-2.7.2
+ARG SINGBOX_EXT_VERSION=1.14.3-extended-2.7.3
 RUN ARCH=$(dpkg --print-architecture) \
     && curl -fsSL "https://github.com/shtorm-7/sing-box-extended/releases/download/v${SINGBOX_EXT_VERSION}/sing-box-${SINGBOX_EXT_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sing-box.tar.gz \
     && tar -xzf /tmp/sing-box.tar.gz -C /tmp \
@@ -120,9 +111,6 @@ RUN chmod +x /app/start.sh /usr/local/bin/raw /usr/local/bin/tproxy-server /usr/
     && mkdir -p /etc/coredns
 
 WORKDIR /app
-
-ENV DATA_DIR=/opt/uncut/data
-ENV INSTALL_DIR=/opt/sing-box
 
 HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -fsSL --max-time 2 http://127.0.0.1:8080/ || curl -fsSL http://127.0.0.1:8088/healthz || exit 1

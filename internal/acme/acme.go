@@ -20,7 +20,7 @@ import (
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/providers/http/webroot"
 	"github.com/go-acme/lego/v4/registration"
-	"github.com/google/renameio/v2"
+	"github.com/rawizhere/uncut-core/internal/config"
 )
 
 const (
@@ -159,7 +159,7 @@ func (m *Manager) getAccountKey() (crypto.PrivateKey, error) {
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err == nil {
 		_ = os.MkdirAll(m.certsDir, 0o755)
-		_ = writeFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
+		_ = config.WriteFileAtomic(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
 	}
 	return key, nil
 }
@@ -212,10 +212,10 @@ func (m *Manager) issue() error {
 	if err := os.MkdirAll(m.certsDir, 0o755); err != nil {
 		return fmt.Errorf("create certs dir: %w", err)
 	}
-	if err := writeFile(m.CertPath(), res.Certificate, 0o644); err != nil {
+	if err := config.WriteFileAtomic(m.CertPath(), res.Certificate, 0o644); err != nil {
 		return err
 	}
-	if err := writeFile(m.KeyPath(), res.PrivateKey, 0o600); err != nil {
+	if err := config.WriteFileAtomic(m.KeyPath(), res.PrivateKey, 0o600); err != nil {
 		return err
 	}
 
@@ -239,11 +239,4 @@ func (u *user) GetRegistration() *registration.Resource {
 
 func (u *user) GetPrivateKey() crypto.PrivateKey {
 	return u.key
-}
-
-func writeFile(path string, data []byte, perm os.FileMode) error {
-	if err := renameio.WriteFile(path, data, perm); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }

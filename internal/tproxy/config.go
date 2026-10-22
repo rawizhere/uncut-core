@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/google/renameio/v2"
 	"github.com/rawizhere/uncut-core/internal/config"
 )
 
@@ -114,7 +113,7 @@ func defaultTimeouts() Timeouts {
 	}
 }
 
-func EnsureSiteIndex(publicDir string) error {
+func ensureSiteIndex(publicDir string) error {
 	if err := os.MkdirAll(publicDir, 0o755); err != nil {
 		return fmt.Errorf("create public dir: %w", err)
 	}
@@ -125,7 +124,7 @@ func EnsureSiteIndex(publicDir string) error {
 	}
 
 	indexHTML := `<!DOCTYPE html><html><head><meta name="robots" content="noindex"></head><body></body></html>`
-	return renameio.WriteFile(indexPath, []byte(indexHTML), 0o644)
+	return config.WriteFileAtomic(indexPath, []byte(indexHTML), 0o644)
 }
 
 // DefaultPublicDir is where the operator-owned public site lives on a node.
@@ -148,7 +147,7 @@ func WriteConfig(installDir, domain, secret, publicDir string) error {
 	configFile := filepath.Join(tproxyDir, "config.json")
 
 	// tproxy-server refuses to start without an index in public_dir.
-	if err := EnsureSiteIndex(publicDir); err != nil {
+	if err := ensureSiteIndex(publicDir); err != nil {
 		return fmt.Errorf("ensure tproxy site index: %w", err)
 	}
 
@@ -184,15 +183,10 @@ func WriteConfig(installDir, domain, secret, publicDir string) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	if err := renameio.WriteFile(profilesFile, profilesData, 0o600); err != nil {
-		return fmt.Errorf("write profiles: %w", err)
+	if err := config.WriteFileAtomic(profilesFile, profilesData, 0o600); err != nil {
+		return err
 	}
-
-	if err := renameio.WriteFile(configFile, cfgData, 0o600); err != nil {
-		return fmt.Errorf("write config: %w", err)
-	}
-
-	return nil
+	return config.WriteFileAtomic(configFile, cfgData, 0o600)
 }
 
 func MaintainTelegramSecrets(ctx context.Context, onUpdate func()) {
@@ -203,7 +197,7 @@ func MaintainTelegramSecrets(ctx context.Context, onUpdate func()) {
 			data, err := io.ReadAll(secretResp.Body)
 			_ = secretResp.Body.Close()
 			if err == nil && len(data) > 0 {
-				_ = renameio.WriteFile("/etc/mtproxy/proxy-secret", data, 0o640)
+				_ = config.WriteFileAtomic("/etc/mtproxy/proxy-secret", data, 0o640)
 			}
 		}
 
@@ -212,7 +206,7 @@ func MaintainTelegramSecrets(ctx context.Context, onUpdate func()) {
 			data, err := io.ReadAll(confResp.Body)
 			_ = confResp.Body.Close()
 			if err == nil && len(data) > 0 {
-				_ = renameio.WriteFile("/etc/mtproxy/proxy-multi.conf", data, 0o640)
+				_ = config.WriteFileAtomic("/etc/mtproxy/proxy-multi.conf", data, 0o640)
 			}
 		}
 

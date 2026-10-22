@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/renameio/v2"
 	"github.com/rawizhere/uncut-core/internal/config"
 	"github.com/rawizhere/uncut-core/internal/core"
 	"github.com/rawizhere/uncut-core/internal/db"
@@ -308,10 +307,7 @@ func get(store *db.Store, key string) string {
 }
 
 func write(path string, data []byte, perm os.FileMode) error {
-	if err := renameio.WriteFile(path, data, perm); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
+	return config.WriteFileAtomic(path, data, perm)
 }
 
 // mergeDefaultProtocols appends post-init default protocols to non-explicit lists; explicit lists stay alone (merging resurrected disabled protocols).

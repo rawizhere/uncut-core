@@ -5,16 +5,14 @@ services:
       dockerfile: deployments/Dockerfile
       args:
         VERSION: ${UNCUT_VERSION:-3.2.0}
-        SINGBOX_EXT_VERSION: ${SINGBOX_EXT_VERSION:-1.13.18-extended-2.6.5}
+        # No value: passed only when set in the environment, else the Dockerfile pin wins.
+        SINGBOX_EXT_VERSION:
     image: ${UNCUT_IMAGE:-ghcr.io/rawizhere/uncut-core:latest}
     container_name: uncut-node
     restart: unless-stopped
     network_mode: host
     env_file:
       - .env
-    environment:
-      - DATA_DIR=/opt/uncut/data
-      - INSTALL_DIR=/opt/sing-box
     volumes:
       - uncut_data:/opt/uncut/data
       - uncut_install:/opt/sing-box

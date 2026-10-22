@@ -7,7 +7,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/google/renameio/v2"
 	"github.com/rawizhere/uncut-core/internal/config"
 	"github.com/rawizhere/uncut-core/internal/transport"
 )
@@ -45,66 +44,26 @@ type GeneratorOptions struct {
 type Paths struct {
 	IncludeDir string
 	ServerFile string
-	Locations  string
 	LimitsFile string
 }
 
-func (opts *GeneratorOptions) normalize() {
-	if opts.InstallDir == "" {
-		opts.InstallDir = "/opt/sing-box"
+// DetectPaths returns the conf.d layout: the image installs nginx.org nginx, which always ships it. The argument is unused.
+func DetectPaths(string) Paths {
+	return Paths{
+		IncludeDir: "/etc/nginx/conf.d",
+		ServerFile: "/etc/nginx/conf.d/uncut.conf",
+		LimitsFile: "/etc/nginx/conf.d/00-uncut-limits.conf",
 	}
-	if opts.SubsDir == "" {
-		opts.SubsDir = "/var/www/cdn/subs"
-	}
-	if opts.LogDir == "" {
-		opts.LogDir = "/var/log/nginx"
-	}
-	if opts.WebRoot == "" {
-		opts.WebRoot = "/var/www/html"
-	}
-	if opts.TelegramProxyPort <= 0 {
-		opts.TelegramProxyPort = config.TelegramProxyPort()
-	}
-	if opts.RealityServerName == "" {
-		opts.RealityServerName = config.DefaultSNI
-	}
-}
-
-func DetectPaths(installDir string) Paths {
-	paths := Paths{
-		Locations: filepath.Join(installDir, "nginx_locations.conf"),
-	}
-
-	switch {
-	case dirExists("/etc/nginx/conf.d"):
-		// conf.d ships with both Debian and nginx.org mainline; http.d does not.
-		paths.IncludeDir = "/etc/nginx/conf.d"
-		paths.ServerFile = "/etc/nginx/conf.d/uncut.conf"
-	case dirExists("/etc/nginx/sites-enabled"):
-		paths.IncludeDir = "/etc/nginx/sites-enabled"
-		paths.ServerFile = "/etc/nginx/sites-available/uncut"
-	default:
-		paths.IncludeDir = "/etc/nginx/http.d"
-		paths.ServerFile = "/etc/nginx/http.d/uncut.conf"
-	}
-
-	paths.LimitsFile = filepath.Join(paths.IncludeDir, "00-uncut-limits.conf")
-	return paths
 }
 
 func WriteFiles(opts GeneratorOptions, paths Paths) error {
-	opts.normalize()
-
 	for _, dir := range []string{paths.IncludeDir, opts.SubsDir, opts.LogDir, opts.WebRoot, StreamConfDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
 
-	if err := write(paths.Locations, []byte(GenerateLocationsConfig(opts)), 0o644); err != nil {
-		return err
-	}
-	if err := write(paths.ServerFile, []byte(GenerateServerConfig(opts)), 0o644); err != nil {
+	if err := config.WriteFileAtomic(paths.ServerFile, []byte(GenerateServerConfig(opts)), 0o644); err != nil {
 		return err
 	}
 	// The stream splitter lives at main context, outside the server conf.
@@ -112,18 +71,10 @@ func WriteFiles(opts GeneratorOptions, paths Paths) error {
 	if err != nil {
 		return err
 	}
-	if err := write(filepath.Join(StreamConfDir, StreamFileName), []byte(streamBody), 0o644); err != nil {
+	if err := config.WriteFileAtomic(filepath.Join(StreamConfDir, StreamFileName), []byte(streamBody), 0o644); err != nil {
 		return err
 	}
-
-	if err := writeLimits(paths.LimitsFile); err != nil {
-		return err
-	}
-
-	if filepath.Dir(paths.ServerFile) != paths.IncludeDir {
-		return linkServerFile(paths)
-	}
-	return nil
+	return writeLimits(paths.LimitsFile)
 }
 
 func writeLimits(path string) error {
@@ -134,106 +85,11 @@ func writeLimits(path string) error {
 			return nil
 		}
 	}
-	return write(path, []byte(body), 0o644)
-}
-
-func linkServerFile(paths Paths) error {
-	link := filepath.Join(paths.IncludeDir, "uncut")
-	if _, err := os.Lstat(link); err == nil {
-		return nil
-	}
-	if err := os.Symlink(paths.ServerFile, link); err != nil {
-		return fmt.Errorf("enable server block: %w", err)
-	}
-	return nil
-}
-
-func GenerateLocationsConfig(opts GeneratorOptions) string {
-	opts.normalize()
-	active := make(map[string]bool, len(opts.ActiveProtocols))
-	for _, p := range config.ResolveProtocols(opts.ActiveProtocols) {
-		active[strings.TrimSpace(p)] = true
-	}
-	var sb strings.Builder
-
-	if active[string(config.ProtoXHTTPStealth)] {
-		xhttpPath := opts.Transport.XHTTPPath()
-		fmt.Fprintf(&sb, "    location ^~ %s {\n", xhttpPath)
-		sb.WriteString("        proxy_pass http://xhttp_backend;\n")
-		sb.WriteString("        proxy_http_version 1.1;\n")
-		sb.WriteString("        proxy_set_header Connection \"\";\n")
-		sb.WriteString("        proxy_buffering off;\n")
-		sb.WriteString("        proxy_request_buffering off;\n")
-		sb.WriteString("        proxy_ignore_client_abort on;\n")
-		sb.WriteString("        proxy_next_upstream off;\n")
-		sb.WriteString("        tcp_nodelay on;\n")
-		sb.WriteString("        client_max_body_size 0;\n")
-		sb.WriteString("        proxy_read_timeout 1h;\n")
-		sb.WriteString("        proxy_send_timeout 1h;\n")
-		sb.WriteString("        proxy_set_header Host $host;\n")
-		sb.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-		sb.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		sb.WriteString("        proxy_set_header X-Forwarded-Proto $scheme;\n")
-		fmt.Fprintf(&sb, "        access_log %s/probe.log combined if=$log_probe;\n", opts.LogDir)
-		sb.WriteString("    }\n\n")
-	}
-
-	if active[string(config.ProtoVLESSWS)] {
-		wsPath := opts.Transport.WSPath()
-		fmt.Fprintf(&sb, "    location = %s {\n", wsPath)
-		sb.WriteString("        proxy_pass http://127.0.0.1:10001;\n")
-		sb.WriteString("        proxy_http_version 1.1;\n")
-		sb.WriteString("        proxy_buffering off;\n")
-		sb.WriteString("        proxy_request_buffering off;\n")
-		sb.WriteString("        tcp_nodelay on;\n")
-		sb.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
-		sb.WriteString("        proxy_set_header Connection \"upgrade\";\n")
-		sb.WriteString("        proxy_read_timeout 300s;\n")
-		sb.WriteString("        proxy_set_header Host $host;\n")
-		sb.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-		sb.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		fmt.Fprintf(&sb, "        access_log %s/probe.log combined if=$log_probe;\n", opts.LogDir)
-		sb.WriteString("    }\n\n")
-	}
-
-	if active[string(config.ProtoVLESSHTTPUpgrade)] {
-		httpUpgradePath := opts.Transport.UpgradePath()
-		fmt.Fprintf(&sb, "    location = %s {\n", httpUpgradePath)
-		sb.WriteString("        proxy_pass http://127.0.0.1:10004;\n")
-		sb.WriteString("        proxy_http_version 1.1;\n")
-		sb.WriteString("        proxy_buffering off;\n")
-		sb.WriteString("        proxy_request_buffering off;\n")
-		sb.WriteString("        tcp_nodelay on;\n")
-		sb.WriteString("        proxy_set_header Upgrade $http_upgrade;\n")
-		sb.WriteString("        proxy_set_header Connection \"upgrade\";\n")
-		sb.WriteString("        proxy_read_timeout 1h;\n")
-		sb.WriteString("        proxy_set_header Host $host;\n")
-		sb.WriteString("        proxy_set_header X-Real-IP $remote_addr;\n")
-		sb.WriteString("        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		fmt.Fprintf(&sb, "        access_log %s/probe.log combined if=$log_probe;\n", opts.LogDir)
-		sb.WriteString("    }\n\n")
-	}
-
-	if active[string(config.ProtoVLESSGRPC)] {
-		fmt.Fprintf(&sb, "    location /%s/ {\n", opts.Transport.GRPCService())
-		sb.WriteString("        grpc_pass grpc://127.0.0.1:10003;\n")
-		sb.WriteString("        client_max_body_size 0;\n")
-		sb.WriteString("        client_body_buffer_size 512k;\n")
-		sb.WriteString("        grpc_buffer_size 512k;\n")
-		sb.WriteString("        grpc_read_timeout 1h;\n")
-		sb.WriteString("        grpc_send_timeout 1h;\n")
-		sb.WriteString("        grpc_set_header Host $host;\n")
-		sb.WriteString("        grpc_set_header X-Real-IP $remote_addr;\n")
-		fmt.Fprintf(&sb, "        access_log %s/probe.log combined if=$log_probe;\n", opts.LogDir)
-		sb.WriteString("    }\n")
-	}
-
-	return sb.String()
+	return config.WriteFileAtomic(path, []byte(body), 0o644)
 }
 
 // GenerateStreamConfig splits TCP 443 by SNI: reality → 8443, FakeTLS → its instance, else → https. A tls domain equal to the reality SNI is an error.
 func GenerateStreamConfig(opts GeneratorOptions) (string, error) {
-	opts.normalize()
 	sni := strings.ToLower(strings.TrimSpace(opts.RealityServerName))
 	tlsDomain := strings.ToLower(strings.TrimSpace(opts.MTProtoTLSDomain))
 
@@ -267,55 +123,54 @@ stream {
 }
 
 func GenerateServerConfig(opts GeneratorOptions) string {
-	opts.normalize()
-	domain := opts.Domain
-	installDir := opts.InstallDir
-	telegramPort := opts.TelegramProxyPort
-
-	// packet-up + keepalive: no fresh TCP dial per POST; must live at http level.
-	upstreamBlock := ""
+	active := make(map[string]bool, len(opts.ActiveProtocols))
 	for _, p := range config.ResolveProtocols(opts.ActiveProtocols) {
-		if strings.TrimSpace(p) == string(config.ProtoXHTTPStealth) {
-			upstreamBlock = `upstream xhttp_backend {
-    server 127.0.0.1:10002;
-    keepalive 64;
-}
-
-`
-			break
-		}
+		active[p] = true
 	}
 
 	// HTTP-01 needs nginx up, but the ssl server needs a cert — render 443 only once the files exist; Maintain re-renders after issuance.
 	certful := true
-	if _, err := os.Stat(filepath.Join(installDir, "certs", "certificates", domain+".crt")); err != nil {
-		certful = false
+	for _, ext := range []string{".crt", ".key"} {
+		if _, err := os.Stat(filepath.Join(opts.InstallDir, "certs", "certificates", opts.Domain+ext)); err != nil {
+			certful = false
+		}
 	}
-	if _, err := os.Stat(filepath.Join(installDir, "certs", "certificates", domain+".key")); err != nil {
-		certful = false
+
+	// nginx and tproxy must agree on the port, so fall back to the same constant tproxy reads.
+	telegramPort := opts.TelegramProxyPort
+	if telegramPort <= 0 {
+		telegramPort = config.TelegramProxyPort()
 	}
 
 	var sb strings.Builder
 	if err := serverTemplate.Execute(&sb, serverData{
-		XHTTPUpstream: upstreamBlock != "",
-		Cert:          certful,
-		Domain:        domain,
-		WebRoot:       opts.WebRoot,
-		LogDir:        opts.LogDir,
-		InstallDir:    installDir,
-		SubLocation:   opts.Transport.SubLocation(),
-		SubsZone:      subsZoneName,
-		SubsDir:       opts.SubsDir,
-		DoHPath:       opts.Transport.DoHPath(),
-		TelegramPort:  telegramPort,
+		XHTTP:        active[string(config.ProtoXHTTPStealth)],
+		WS:           active[string(config.ProtoVLESSWS)],
+		Upgrade:      active[string(config.ProtoVLESSHTTPUpgrade)],
+		GRPC:         active[string(config.ProtoVLESSGRPC)],
+		Cert:         certful,
+		Domain:       opts.Domain,
+		WebRoot:      opts.WebRoot,
+		LogDir:       opts.LogDir,
+		InstallDir:   opts.InstallDir,
+		SubLocation:  opts.Transport.SubLocation(),
+		SubsZone:     subsZoneName,
+		SubsDir:      opts.SubsDir,
+		DoHPath:      opts.Transport.DoHPath(),
+		XHTTPPath:    opts.Transport.XHTTPPath(),
+		WSPath:       opts.Transport.WSPath(),
+		UpgradePath:  opts.Transport.UpgradePath(),
+		GRPCService:  opts.Transport.GRPCService(),
+		TelegramPort: telegramPort,
 	}); err != nil {
 		panic(fmt.Errorf("render server template: %w", err))
 	}
 	return sb.String()
 }
 
-// serverTemplate renders the whole server config: the xhttp upstream and the 80/8442 head always; the 443 server only once the certificate files exist.
-var serverTemplate = template.Must(template.New("uncut").Parse(`{{if .XHTTPUpstream}}upstream xhttp_backend {
+// serverTemplate renders the whole server config: the 80/8442 head always; the 443 server, with a location per active protocol, only once the certificate files exist.
+// The xhttp upstream (packet-up + keepalive: no fresh TCP dial per POST) must live at http level.
+var serverTemplate = template.Must(template.New("uncut").Parse(`{{if .XHTTP}}upstream xhttp_backend {
     server 127.0.0.1:10002;
     keepalive 64;
 }
@@ -412,9 +267,68 @@ server {
         proxy_buffering off;
     }
 
-    include {{.InstallDir}}/nginx_locations.conf;
+{{if .XHTTP}}    location ^~ {{.XHTTPPath}} {
+        proxy_pass http://xhttp_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_ignore_client_abort on;
+        proxy_next_upstream off;
+        tcp_nodelay on;
+        client_max_body_size 0;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        access_log {{.LogDir}}/probe.log combined if=$log_probe;
+    }
 
-    location /api/v1/ {
+{{end}}{{if .WS}}    location = {{.WSPath}} {
+        proxy_pass http://127.0.0.1:10001;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        tcp_nodelay on;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 300s;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        access_log {{.LogDir}}/probe.log combined if=$log_probe;
+    }
+
+{{end}}{{if .Upgrade}}    location = {{.UpgradePath}} {
+        proxy_pass http://127.0.0.1:10004;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        tcp_nodelay on;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 1h;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        access_log {{.LogDir}}/probe.log combined if=$log_probe;
+    }
+
+{{end}}{{if .GRPC}}    location /{{.GRPCService}}/ {
+        grpc_pass grpc://127.0.0.1:10003;
+        client_max_body_size 0;
+        client_body_buffer_size 512k;
+        grpc_buffer_size 512k;
+        grpc_read_timeout 1h;
+        grpc_send_timeout 1h;
+        grpc_set_header Host $host;
+        grpc_set_header X-Real-IP $remote_addr;
+        access_log {{.LogDir}}/probe.log combined if=$log_probe;
+    }
+
+{{end}}    location /api/v1/ {
         proxy_pass http://127.0.0.1:{{.TelegramPort}};
         # tproxy's own error page must not stand out from any other miss.
         proxy_intercept_errors on;
@@ -453,27 +367,19 @@ server {
 
 // serverData carries every named field the server template renders; the named form kills the positional-argument bug class the Sprintf chain had.
 type serverData struct {
-	XHTTPUpstream bool
-	Cert          bool
-	Domain        string
-	WebRoot       string
-	LogDir        string
-	InstallDir    string
-	SubLocation   string
-	SubsZone      string
-	SubsDir       string
-	DoHPath       string
-	TelegramPort  int
-}
-
-func write(path string, data []byte, perm os.FileMode) error {
-	if err := renameio.WriteFile(path, data, perm); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
-}
-
-func dirExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
+	XHTTP, WS, Upgrade, GRPC bool
+	Cert                     bool
+	Domain                   string
+	WebRoot                  string
+	LogDir                   string
+	InstallDir               string
+	SubLocation              string
+	SubsZone                 string
+	SubsDir                  string
+	DoHPath                  string
+	XHTTPPath                string
+	WSPath                   string
+	UpgradePath              string
+	GRPCService              string
+	TelegramPort             int
 }
