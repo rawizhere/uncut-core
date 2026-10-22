@@ -38,7 +38,11 @@ if [ -f /sys/module/nf_conntrack/parameters/hashsize ]; then
 	echo 16384 > /sys/module/nf_conntrack/parameters/hashsize
 fi
 sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null
-printf 'net.netfilter.nf_conntrack_max = 65536\nnet.ipv4.tcp_tw_reuse = 1\n' > /etc/sysctl.d/99-uncut-conntrack.conf
+# mtproto-proxy piles up tens of thousands of TIME_WAIT entries toward Telegram middle proxies; short timeouts keep the table under the max.
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_time_wait=30 >/dev/null
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_fin_wait=60 >/dev/null
+sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close_wait=45 >/dev/null
+printf 'net.netfilter.nf_conntrack_max = 65536\nnet.ipv4.tcp_tw_reuse = 1\nnet.netfilter.nf_conntrack_tcp_timeout_time_wait = 30\nnet.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60\nnet.netfilter.nf_conntrack_tcp_timeout_close_wait = 45\n' > /etc/sysctl.d/99-uncut-conntrack.conf
 
 echo "==> firewall"
 ufw --force reset >/dev/null
