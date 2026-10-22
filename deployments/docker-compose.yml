@@ -12,9 +12,6 @@ services:
     network_mode: host
     env_file:
       - .env
-    environment:
-      - DATA_DIR=/opt/uncut/data
-      - INSTALL_DIR=/opt/sing-box
     volumes:
       - uncut_data:/opt/uncut/data
       - uncut_install:/opt/sing-box
