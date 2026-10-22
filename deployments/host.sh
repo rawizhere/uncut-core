@@ -30,6 +30,16 @@ if ! systemctl is-active --quiet chrony && ! systemctl is-active --quiet systemd
 	systemctl enable --now chrony 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
 fi
 
+# MTProto proxy opens thousands of short-lived connections to Telegram middle proxies;
+# the default table (often 7-16k) fills up and the kernel drops packets at random.
+echo "==> conntrack"
+sysctl -w net.netfilter.nf_conntrack_max=65536 >/dev/null
+if [ -f /sys/module/nf_conntrack/parameters/hashsize ]; then
+	echo 16384 > /sys/module/nf_conntrack/parameters/hashsize
+fi
+sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null
+printf 'net.netfilter.nf_conntrack_max = 65536\nnet.ipv4.tcp_tw_reuse = 1\n' > /etc/sysctl.d/99-uncut-conntrack.conf
+
 echo "==> firewall"
 ufw --force reset >/dev/null
 rm -f /etc/ufw/*.rules.[0-9]*
