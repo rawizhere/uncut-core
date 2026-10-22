@@ -113,7 +113,7 @@ func defaultTimeouts() Timeouts {
 	}
 }
 
-func EnsureSiteIndex(publicDir string) error {
+func ensureSiteIndex(publicDir string) error {
 	if err := os.MkdirAll(publicDir, 0o755); err != nil {
 		return fmt.Errorf("create public dir: %w", err)
 	}
@@ -147,7 +147,7 @@ func WriteConfig(installDir, domain, secret, publicDir string) error {
 	configFile := filepath.Join(tproxyDir, "config.json")
 
 	// tproxy-server refuses to start without an index in public_dir.
-	if err := EnsureSiteIndex(publicDir); err != nil {
+	if err := ensureSiteIndex(publicDir); err != nil {
 		return fmt.Errorf("ensure tproxy site index: %w", err)
 	}
 
