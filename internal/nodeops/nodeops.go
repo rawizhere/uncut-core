@@ -84,7 +84,7 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, errors.New("client name is required")
 	}
 
-	appCfg, _ := config.LoadAppConfig()
+	appCfg := config.LoadAppConfig()
 	settings, err := setup.Ensure(ctx, store, appCfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("ensure setup: %w", err)
@@ -112,7 +112,7 @@ func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, err
 	}
 
-	appCfg, _ := config.LoadAppConfig()
+	appCfg := config.LoadAppConfig()
 	settings, err := setup.Ensure(ctx, store, appCfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("ensure setup: %w", err)
@@ -292,7 +292,7 @@ func DeleteClient(ctx context.Context, store *db.Store, opts setup.Options, name
 
 // ListClients returns the node's clients plus the fqdn and raw secret link builders need.
 func ListClients(ctx context.Context, store *db.Store, opts setup.Options) (*ClientList, error) {
-	appCfg, _ := config.LoadAppConfig()
+	appCfg := config.LoadAppConfig()
 	settings, _ := setup.Ensure(ctx, store, appCfg, opts)
 
 	domain, _ := store.GetSetting("domain")
@@ -359,10 +359,7 @@ func ChangeDomain(ctx context.Context, store *db.Store, opts setup.Options, newD
 		return fmt.Errorf("update domain setting: %w", err)
 	}
 
-	appCfg, err := config.LoadAppConfig()
-	if err != nil {
-		return err
-	}
+	appCfg := config.LoadAppConfig()
 
 	mgr := acme.New(newDomain, appCfg.Email, opts.CertsDir(), opts.WebRoot)
 	if err := mgr.ForceRenew(); err != nil {

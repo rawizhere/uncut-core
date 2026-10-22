@@ -213,7 +213,7 @@ func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor
 		return err
 	}
 
-	if err := nginx.WriteFiles(generatorOptions(settings, opts), nginx.DetectPaths(opts.InstallDir)); err != nil {
+	if err := nginx.WriteFiles(generatorOptions(settings, opts)); err != nil {
 		return fmt.Errorf("write nginx files: %w", err)
 	}
 

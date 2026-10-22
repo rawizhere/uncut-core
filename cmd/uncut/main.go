@@ -34,11 +34,7 @@ var (
 const noStore = "no-store"
 
 func main() {
-	appCfg, err := config.LoadAppConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
+	appCfg := config.LoadAppConfig()
 	config.InitLogger(appCfg.LogLevel)
 
 	rootCmd := &cobra.Command{
@@ -85,7 +81,7 @@ func main() {
 	rootCmd.AddCommand(setCertCmd())
 	rootCmd.AddCommand(hysteria2BandwidthCmd())
 
-	err = rootCmd.Execute()
+	err := rootCmd.Execute()
 	// Closed here, not in a post-run: cobra skips post-runs when RunE fails.
 	if store != nil {
 		_ = store.Close()
@@ -115,10 +111,7 @@ func daemonCmd() *cobra.Command {
 		Use:   "daemon",
 		Short: "Run Uncut Core Supervisor Daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			appCfg, err := config.LoadAppConfig()
-			if err != nil {
-				return fmt.Errorf("load app config: %w", err)
-			}
+			appCfg := config.LoadAppConfig()
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -176,7 +169,7 @@ func menuCmd() *cobra.Command {
 }
 
 func openMenu(cmd *cobra.Command) error {
-	appCfg, _ := config.LoadAppConfig()
+	appCfg := config.LoadAppConfig()
 	_, _ = setup.Ensure(cmd.Context(), store, appCfg, opts)
 
 	m := tui.NewMenu(store, opts)

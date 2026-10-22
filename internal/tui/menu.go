@@ -278,14 +278,14 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 				activeMap[p] = true
 			}
 			var currentSelected []string
-			for _, p := range config.ValidProtocols {
+			for _, p := range config.DefaultProtocols {
 				if activeMap[string(p)] || len(client.Protocols) == 0 {
 					currentSelected = append(currentSelected, string(p))
 				}
 			}
 
 			var protoOpts []huh.Option[string]
-			for _, p := range config.ValidProtocols {
+			for _, p := range config.DefaultProtocols {
 				protoOpts = append(protoOpts, huh.NewOption(string(p), string(p)))
 			}
 
@@ -326,14 +326,14 @@ func (m *Menu) manageProtocols(ctx context.Context) {
 	}
 
 	selected := make([]string, 0)
-	for _, p := range config.ValidProtocols {
+	for _, p := range config.DefaultProtocols {
 		if activeMap[string(p)] {
 			selected = append(selected, string(p))
 		}
 	}
 
 	var options []huh.Option[string]
-	for _, p := range config.ValidProtocols {
+	for _, p := range config.DefaultProtocols {
 		label := string(p)
 		switch p {
 		case config.ProtoVLESSReality:

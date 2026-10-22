@@ -27,43 +27,33 @@ const (
 )
 
 type GeneratorOptions struct {
-	Domain            string
-	InstallDir        string
-	SubsDir           string
-	LogDir            string
-	WebRoot           string
-	ProtocolSalt      string
-	ActiveProtocols   []string
-	TelegramProxyPort int
-	Transport         *transport.Transport
+	Domain          string
+	InstallDir      string
+	SubsDir         string
+	LogDir          string
+	WebRoot         string
+	ActiveProtocols []string
+	Transport       *transport.Transport
 	// RealityServerName: the SNI routed to the reality inbound, not https.
 	RealityServerName string
 	MTProtoTLSDomain  string
 }
 
-type Paths struct {
-	IncludeDir string
-	ServerFile string
-	LimitsFile string
-}
+// conf.d always exists: the image installs nginx.org nginx.
+const (
+	confDir    = "/etc/nginx/conf.d"
+	serverFile = confDir + "/uncut.conf"
+	limitsFile = confDir + "/00-uncut-limits.conf"
+)
 
-// DetectPaths returns the conf.d layout: the image installs nginx.org nginx, which always ships it. The argument is unused.
-func DetectPaths(string) Paths {
-	return Paths{
-		IncludeDir: "/etc/nginx/conf.d",
-		ServerFile: "/etc/nginx/conf.d/uncut.conf",
-		LimitsFile: "/etc/nginx/conf.d/00-uncut-limits.conf",
-	}
-}
-
-func WriteFiles(opts GeneratorOptions, paths Paths) error {
-	for _, dir := range []string{paths.IncludeDir, opts.SubsDir, opts.LogDir, opts.WebRoot, StreamConfDir} {
+func WriteFiles(opts GeneratorOptions) error {
+	for _, dir := range []string{confDir, opts.SubsDir, opts.LogDir, opts.WebRoot, StreamConfDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
 
-	if err := config.WriteFileAtomic(paths.ServerFile, []byte(GenerateServerConfig(opts)), 0o644); err != nil {
+	if err := config.WriteFileAtomic(serverFile, []byte(GenerateServerConfig(opts)), 0o644); err != nil {
 		return err
 	}
 	// The stream splitter lives at main context, outside the server conf.
@@ -74,7 +64,7 @@ func WriteFiles(opts GeneratorOptions, paths Paths) error {
 	if err := config.WriteFileAtomic(filepath.Join(StreamConfDir, StreamFileName), []byte(streamBody), 0o644); err != nil {
 		return err
 	}
-	return writeLimits(paths.LimitsFile)
+	return writeLimits(limitsFile)
 }
 
 func writeLimits(path string) error {
@@ -136,12 +126,6 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 		}
 	}
 
-	// nginx and tproxy must agree on the port, so fall back to the same constant tproxy reads.
-	telegramPort := opts.TelegramProxyPort
-	if telegramPort <= 0 {
-		telegramPort = config.TelegramProxyPort()
-	}
-
 	var sb strings.Builder
 	if err := serverTemplate.Execute(&sb, serverData{
 		XHTTP:        active[string(config.ProtoXHTTPStealth)],
@@ -161,7 +145,7 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 		WSPath:       opts.Transport.WSPath(),
 		UpgradePath:  opts.Transport.UpgradePath(),
 		GRPCService:  opts.Transport.GRPCService(),
-		TelegramPort: telegramPort,
+		TelegramPort: config.DefaultTelegramProxyPort,
 	}); err != nil {
 		panic(fmt.Errorf("render server template: %w", err))
 	}
@@ -381,5 +365,5 @@ type serverData struct {
 	WSPath                   string
 	UpgradePath              string
 	GRPCService              string
-	TelegramPort             int
+	TelegramPort             string
 }

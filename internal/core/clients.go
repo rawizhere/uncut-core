@@ -43,10 +43,6 @@ func RandomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-func AddClientWithDefaultProtocols(store *db.Store, name string) (*config.Client, error) {
-	return AddClient(store, name, nil)
-}
-
 // AddClient creates a client: no protocols means a default snapshot that inherits the server's set; a list is an explicit allowlist.
 func AddClient(store *db.Store, name string, protocols []string) (*config.Client, error) {
 	if err := ValidateClientName(name); err != nil {

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,7 +26,7 @@ type AppConfig struct {
 var Version = "3.2.0"
 
 // LoadAppConfig reads the process environment; compose's env_file supplies deployments/.env.
-func LoadAppConfig() (*AppConfig, error) {
+func LoadAppConfig() *AppConfig {
 	return &AppConfig{
 		Domain:   os.Getenv("DOMAIN"),
 		Email:    os.Getenv("EMAIL"),
@@ -35,7 +34,7 @@ func LoadAppConfig() (*AppConfig, error) {
 		Timezone: cmp.Or(os.Getenv("TZ"), "Europe/Moscow"),
 		Clients:  os.Getenv("CLIENTS"),
 		LogLevel: cmp.Or(os.Getenv("LOG_LEVEL"), "info"),
-	}, nil
+	}
 }
 
 func InitLogger(level string) {
@@ -70,11 +69,8 @@ var DefaultProtocols = []InboundProtocol{
 	ProtoHysteria2,
 }
 
-// ValidProtocols is DefaultProtocols: nothing known is off by default.
-var ValidProtocols = DefaultProtocols
-
-func IsValidProtocol(p string) bool {
-	return slices.Contains(ValidProtocols, InboundProtocol(p))
+func isValidProtocol(p string) bool {
+	return slices.Contains(DefaultProtocols, InboundProtocol(p))
 }
 
 // DefaultProtocolNames is DefaultProtocols in the stored string form.
@@ -94,7 +90,7 @@ func CleanProtocols(raw []string) ([]string, error) {
 		if p == "" || slices.Contains(out, p) {
 			continue
 		}
-		if !IsValidProtocol(p) {
+		if !isValidProtocol(p) {
 			return nil, fmt.Errorf("unknown protocol %q", p)
 		}
 		out = append(out, p)
@@ -104,7 +100,7 @@ func CleanProtocols(raw []string) ([]string, error) {
 
 // ResolveProtocols is the server's active set: unknown names are skipped so a stored list never breaks rendering; empty means defaults.
 func ResolveProtocols(raw []string) []string {
-	known := slices.DeleteFunc(slices.Clone(raw), func(p string) bool { return !IsValidProtocol(strings.TrimSpace(p)) })
+	known := slices.DeleteFunc(slices.Clone(raw), func(p string) bool { return !isValidProtocol(strings.TrimSpace(p)) })
 	out, _ := CleanProtocols(known)
 	if len(out) == 0 {
 		return DefaultProtocolNames()
@@ -157,18 +153,7 @@ const (
 	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.
 	Hysteria2HopPortsDefault = "20000:30000"
 	DefaultTelegramProxyPort = "8080"
-	DefaultSubsDir           = "/var/www/cdn/subs"
-	DefaultWebRoot           = "/var/www/html"
 )
-
-// TelegramProxyPort: nginx and tproxy must read the same number or the bridge serves an empty page.
-func TelegramProxyPort() int {
-	port, err := strconv.Atoi(DefaultTelegramProxyPort)
-	if err != nil || port <= 0 {
-		return 8080
-	}
-	return port
-}
 
 var mskLocation = time.FixedZone("MSK", 3*60*60)
 
