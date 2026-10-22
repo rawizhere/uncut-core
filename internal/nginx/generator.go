@@ -7,7 +7,6 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/google/renameio/v2"
 	"github.com/rawizhere/uncut-core/internal/config"
 	"github.com/rawizhere/uncut-core/internal/transport"
 )
@@ -101,10 +100,10 @@ func WriteFiles(opts GeneratorOptions, paths Paths) error {
 		}
 	}
 
-	if err := write(paths.Locations, []byte(GenerateLocationsConfig(opts)), 0o644); err != nil {
+	if err := config.WriteFileAtomic(paths.Locations, []byte(GenerateLocationsConfig(opts)), 0o644); err != nil {
 		return err
 	}
-	if err := write(paths.ServerFile, []byte(GenerateServerConfig(opts)), 0o644); err != nil {
+	if err := config.WriteFileAtomic(paths.ServerFile, []byte(GenerateServerConfig(opts)), 0o644); err != nil {
 		return err
 	}
 	// The stream splitter lives at main context, outside the server conf.
@@ -112,7 +111,7 @@ func WriteFiles(opts GeneratorOptions, paths Paths) error {
 	if err != nil {
 		return err
 	}
-	if err := write(filepath.Join(StreamConfDir, StreamFileName), []byte(streamBody), 0o644); err != nil {
+	if err := config.WriteFileAtomic(filepath.Join(StreamConfDir, StreamFileName), []byte(streamBody), 0o644); err != nil {
 		return err
 	}
 
@@ -134,7 +133,7 @@ func writeLimits(path string) error {
 			return nil
 		}
 	}
-	return write(path, []byte(body), 0o644)
+	return config.WriteFileAtomic(path, []byte(body), 0o644)
 }
 
 func linkServerFile(paths Paths) error {
@@ -464,13 +463,6 @@ type serverData struct {
 	SubsDir       string
 	DoHPath       string
 	TelegramPort  int
-}
-
-func write(path string, data []byte, perm os.FileMode) error {
-	if err := renameio.WriteFile(path, data, perm); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }
 
 func dirExists(path string) bool {
