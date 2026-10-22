@@ -157,8 +157,8 @@ func getCPUPercent() float64 {
 	return (1.0 - (idleDelta / totalDelta)) * 100.0
 }
 
-func GetSSLMetrics(installDir, domain string) (*SSLMetrics, error) {
-	certPath := filepath.Join(installDir, "certs/certificates", domain+".crt")
+func GetSSLMetrics(certsDir, domain string) (*SSLMetrics, error) {
+	certPath := filepath.Join(certsDir, domain+".crt")
 	data, err := os.ReadFile(certPath)
 	if err != nil {
 		return nil, fmt.Errorf("certificate file not found: %w", err)
