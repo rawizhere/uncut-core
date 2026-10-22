@@ -157,7 +157,7 @@ const (
 	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.
 	Hysteria2HopPortsDefault = "20000:30000"
 	DefaultTelegramProxyPort = "8080"
-	DefaultFingerprint       = "chrome"
+	DefaultFingerprint       = "firefox"
 )
 
 var mskLocation = time.FixedZone("MSK", 3*60*60)
