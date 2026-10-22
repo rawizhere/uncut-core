@@ -3,12 +3,10 @@ module github.com/rawizhere/uncut-core
 go 1.27.0
 
 require (
-	github.com/caarlos0/env/v11 v11.4.1
 	github.com/charmbracelet/huh v1.0.0
 	github.com/go-acme/lego/v4 v4.35.2
 	github.com/google/renameio/v2 v2.0.2
 	github.com/google/uuid v1.6.0
-	github.com/joho/godotenv v1.5.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.57.0

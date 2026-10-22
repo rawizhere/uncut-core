@@ -22,11 +22,8 @@ var DefaultIPEndpoints = []string{
 
 var ErrNoIPDetected = errors.New("failed to detect public IPv4 from all endpoints")
 
+// GetPublicIPv4 asks each of DefaultIPEndpoints in turn; the first IPv4 answer wins.
 func GetPublicIPv4(ctx context.Context, client *http.Client) (string, error) {
-	return GetPublicIPv4FromEndpoints(ctx, client, DefaultIPEndpoints...)
-}
-
-func GetPublicIPv4FromEndpoints(ctx context.Context, client *http.Client, endpoints ...string) (string, error) {
 	httpClient := client
 	if httpClient == nil {
 		httpClient = &http.Client{
@@ -34,7 +31,7 @@ func GetPublicIPv4FromEndpoints(ctx context.Context, client *http.Client, endpoi
 		}
 	}
 
-	for _, endpoint := range endpoints {
+	for _, endpoint := range DefaultIPEndpoints {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 		if err != nil {
 			continue
@@ -69,16 +66,10 @@ func SyncServerIP(ctx context.Context, store *db.Store, client *http.Client, for
 	}
 
 	savedIP, _ := store.GetSetting("server_ip")
-	if savedIP == "" {
-		savedIP, _ = store.GetSetting("ip")
-	}
 
 	if force || savedIP != currentIP {
 		if err := store.SetSetting("server_ip", currentIP); err != nil {
 			return "", false, fmt.Errorf("save server_ip setting: %w", err)
-		}
-		if err := store.SetSetting("ip", currentIP); err != nil {
-			return "", false, fmt.Errorf("save ip setting: %w", err)
 		}
 
 		slog.Info("Server IP synced", "previous", savedIP, "current", currentIP, "forced", force)

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -105,72 +106,38 @@ func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
 }
 
 func GenerateClientLinks(client config.Client, s config.Settings) []string {
-	activeServerProtos := config.ResolveProtocols(s.Protocols)
-
-	serverProtoMap := make(map[string]bool)
-	for _, p := range activeServerProtos {
-		serverProtoMap[strings.TrimSpace(p)] = true
-	}
-
-	// Stored client rows predate the hysteria2 swap: normalize before matching, and rows may hold both the retired name and the replacement.
-	seen := make(map[string]bool, len(client.Protocols))
-	clientProtos := make([]string, 0, len(client.Protocols))
-	for _, cp := range client.Protocols {
-		if strings.TrimSpace(cp) == "tuic" {
-			cp = string(config.ProtoHysteria2)
-		}
-		if seen[cp] {
-			continue
-		}
-		seen[cp] = true
-		clientProtos = append(clientProtos, cp)
-	}
-	if !client.ProtocolsExplicit {
+	server := config.ResolveProtocols(s.Protocols)
+	protos := client.Protocols
+	if !client.ProtocolsExplicit || len(protos) == 0 {
 		// Non-explicit lists are creation snapshots: they merge in new server protocols. Explicit is an allowlist — off stays off.
-		for _, sp := range activeServerProtos {
-			sp = strings.TrimSpace(sp)
-			if sp == "" {
-				continue
-			}
-			found := false
-			for _, cp := range clientProtos {
-				if strings.TrimSpace(cp) == sp {
-					found = true
-					break
-				}
-			}
-			if !found {
-				clientProtos = append(clientProtos, sp)
-			}
-		}
-	}
-	if len(clientProtos) == 0 {
-		clientProtos = activeServerProtos
+		protos = append(slices.Clone(protos), server...)
 	}
 
 	links := make([]string, 0)
-	for _, proto := range clientProtos {
-		proto = strings.TrimSpace(proto)
-		if !serverProtoMap[proto] {
+	for _, proto := range protos {
+		if !slices.Contains(server, proto) {
 			continue
 		}
-
-		switch proto {
-		case string(config.ProtoVLESSReality):
-			links = append(links, GenerateVLESSRealityLink(client, s))
-		case string(config.ProtoHysteria2):
-			links = append(links, GenerateHysteria2Link(client, s))
-		case string(config.ProtoVLESSWS):
-			links = append(links, GenerateVLESSWSLink(client, s))
-		case string(config.ProtoXHTTPStealth):
-			links = append(links, GenerateXHTTPStealthLink(client, s))
-		case string(config.ProtoVLESSHTTPUpgrade):
-			links = append(links, GenerateVLESSHTTPUpgradeLink(client, s))
-		case string(config.ProtoVLESSGRPC):
-			links = append(links, GenerateVLESSGRPCLink(client, s))
+		var link string
+		switch config.InboundProtocol(proto) {
+		case config.ProtoVLESSReality:
+			link = GenerateVLESSRealityLink(client, s)
+		case config.ProtoHysteria2:
+			link = GenerateHysteria2Link(client, s)
+		case config.ProtoVLESSWS:
+			link = GenerateVLESSWSLink(client, s)
+		case config.ProtoXHTTPStealth:
+			link = GenerateXHTTPStealthLink(client, s)
+		case config.ProtoVLESSHTTPUpgrade:
+			link = GenerateVLESSHTTPUpgradeLink(client, s)
+		case config.ProtoVLESSGRPC:
+			link = GenerateVLESSGRPCLink(client, s)
+		}
+		// One link per protocol: the merge above and old rows can repeat one.
+		if !slices.Contains(links, link) {
+			links = append(links, link)
 		}
 	}
-
 	return links
 }
 
@@ -210,7 +177,7 @@ func RegenerateAllSubscriptions(store *db.Store, subDir string, s config.Setting
 
 	for _, client := range clients {
 		if client.SubHash == "" {
-			client.SubHash = GenerateSubToken()
+			client.SubHash = RandomHex(16)
 			if err := store.AddClient(client); err != nil {
 				return fmt.Errorf("persist sub token for %s: %w", client.Name, err)
 			}

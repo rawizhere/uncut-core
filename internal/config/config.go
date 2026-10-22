@@ -1,40 +1,41 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/caarlos0/env/v11"
-	"github.com/joho/godotenv"
 	"github.com/rawizhere/uncut-core/internal/transport"
 )
 
 type AppConfig struct {
-	Domain string `env:"DOMAIN"`
-	Email  string `env:"EMAIL"`
-	// No envDefault on purpose: unset TAG renders no tag token on labels.
-	Tag      string `env:"TAG"`
-	Timezone string `env:"TZ" envDefault:"Europe/Moscow"`
-	Clients  string `env:"CLIENTS"`
-	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
+	Domain string
+	Email  string
+	// No default on purpose: unset TAG renders no tag token on labels.
+	Tag      string
+	Timezone string
+	Clients  string
+	LogLevel string
 }
 
 // Version is a fallback for plain go build; images inject the tag with -ldflags -X.
 var Version = "3.2.0"
 
+// LoadAppConfig reads the process environment; compose's env_file supplies deployments/.env.
 func LoadAppConfig() (*AppConfig, error) {
-	_ = godotenv.Load()
-	_ = godotenv.Load("deployments/.env")
-
-	cfg := &AppConfig{}
-	if err := env.Parse(cfg); err != nil {
-		return nil, fmt.Errorf("parse env: %w", err)
-	}
-	return cfg, nil
+	return &AppConfig{
+		Domain:   os.Getenv("DOMAIN"),
+		Email:    os.Getenv("EMAIL"),
+		Tag:      os.Getenv("TAG"),
+		Timezone: cmp.Or(os.Getenv("TZ"), "Europe/Moscow"),
+		Clients:  os.Getenv("CLIENTS"),
+		LogLevel: cmp.Or(os.Getenv("LOG_LEVEL"), "info"),
+	}, nil
 }
 
 func InitLogger(level string) {
@@ -59,6 +60,7 @@ const (
 	ProtoHysteria2        InboundProtocol = "hysteria2"
 )
 
+// DefaultProtocols is the one protocol list: every known protocol, on by default, in render order.
 var DefaultProtocols = []InboundProtocol{
 	ProtoXHTTPStealth,
 	ProtoVLESSWS,
@@ -68,44 +70,44 @@ var DefaultProtocols = []InboundProtocol{
 	ProtoHysteria2,
 }
 
-var ValidProtocols = []InboundProtocol{
-	ProtoXHTTPStealth,
-	ProtoVLESSWS,
-	ProtoVLESSHTTPUpgrade,
-	ProtoVLESSGRPC,
-	ProtoVLESSReality,
-	ProtoHysteria2,
-}
+// ValidProtocols is DefaultProtocols: nothing known is off by default.
+var ValidProtocols = DefaultProtocols
 
 func IsValidProtocol(p string) bool {
-	for _, valid := range ValidProtocols {
-		if string(valid) == p {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ValidProtocols, InboundProtocol(p))
 }
 
-func ResolveProtocols(raw []string) []string {
-	seen := make(map[string]bool, len(raw))
+// DefaultProtocolNames is DefaultProtocols in the stored string form.
+func DefaultProtocolNames() []string {
+	out := make([]string, len(DefaultProtocols))
+	for i, p := range DefaultProtocols {
+		out[i] = string(p)
+	}
+	return out
+}
+
+// CleanProtocols trims, drops empties and duplicates, and rejects unknown names.
+func CleanProtocols(raw []string) ([]string, error) {
 	out := make([]string, 0, len(raw))
 	for _, p := range raw {
 		p = strings.TrimSpace(p)
-		// tuic rows predate the hysteria2 swap; map them so stored client lists keep working.
-		if p == "tuic" {
-			p = string(ProtoHysteria2)
-		}
-		if p == "" || seen[p] || !IsValidProtocol(p) {
+		if p == "" || slices.Contains(out, p) {
 			continue
 		}
-		seen[p] = true
+		if !IsValidProtocol(p) {
+			return nil, fmt.Errorf("unknown protocol %q", p)
+		}
 		out = append(out, p)
 	}
-	if len(out) > 0 {
-		return out
-	}
-	for _, p := range DefaultProtocols {
-		out = append(out, string(p))
+	return out, nil
+}
+
+// ResolveProtocols is the server's active set: unknown names are skipped so a stored list never breaks rendering; empty means defaults.
+func ResolveProtocols(raw []string) []string {
+	known := slices.DeleteFunc(slices.Clone(raw), func(p string) bool { return !IsValidProtocol(strings.TrimSpace(p)) })
+	out, _ := CleanProtocols(known)
+	if len(out) == 0 {
+		return DefaultProtocolNames()
 	}
 	return out
 }
@@ -143,9 +145,8 @@ type Settings struct {
 	LogDir            string   `json:"log_dir,omitempty"`
 	MTProtoRawSecret  string   `json:"mtproto_raw_secret,omitempty"`
 	// MTProtoTLSDomain is the optional third-party domain for the FakeTLS branch. Empty means the branch is off.
-	MTProtoTLSDomain  string               `json:"mtproto_tls_domain,omitempty"`
-	TelegramProxyPort string               `json:"telegram_proxy_port,omitempty"`
-	Transport         *transport.Transport `json:"transport,omitempty"`
+	MTProtoTLSDomain string               `json:"mtproto_tls_domain,omitempty"`
+	Transport        *transport.Transport `json:"transport,omitempty"`
 }
 
 const (

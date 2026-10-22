@@ -13,11 +13,8 @@ import (
 // HashToken marks the per-client md5 inside the subscription path; generation data, never editable.
 const HashToken = "{hash}"
 
-const (
-	DefaultGRPC = "ingest.v1.IngestService"
-	// DefaultRealitySNI is the fallback SNI for the REALITY handshake.
-	DefaultRealitySNI = "dl.google.com"
-)
+// DefaultRealitySNI is the SNI a fresh transport hands the REALITY handshake.
+const DefaultRealitySNI = "dl.google.com"
 
 // SubHashPattern matches the subscription hash: md5, so 32 hex digits.
 const SubHashPattern = "[a-f0-9]{32}"
@@ -34,18 +31,6 @@ type Transport struct {
 	// Sub is a generated wrapper around HashToken, e.g. "/a1b2.../{hash}.bin".
 	Sub string `json:"sub,omitempty"`
 	// RealityServerName is the public SNI the reality handshake masquerades as.
-	RealityServerName string `json:"realityServerName,omitempty"`
-}
-
-// LegacyTemplates is the old template legend, read only during migration.
-type LegacyTemplates struct {
-	GRPC  string `json:"grpcService,omitempty"`
-	Paths struct {
-		XHTTP   string `json:"ingest,omitempty"`
-		WS      string `json:"ws,omitempty"`
-		Upgrade string `json:"upgrade,omitempty"`
-		Sub     string `json:"sub,omitempty"`
-	} `json:"paths,omitempty"`
 	RealityServerName string `json:"realityServerName,omitempty"`
 }
 
@@ -73,45 +58,14 @@ func Generate() (*Transport, error) {
 	return t, nil
 }
 
-// FromLegacy bakes the template legend + protocol salt into concrete paths; the wire bytes stay identical.
-func FromLegacy(l *LegacyTemplates, salt string) *Transport {
-	if salt == "" {
-		// Callers used to fall back to this literal for an empty salt.
-		salt = "default"
-	}
-	bake := func(s string) string { return strings.ReplaceAll(s, "{salt}", salt) }
-	return (&Transport{
-		GRPC:              l.GRPC,
-		XHTTP:             bake(l.Paths.XHTTP),
-		WS:                bake(l.Paths.WS),
-		Upgrade:           bake(l.Paths.Upgrade),
-		Sub:               l.Paths.Sub,
-		RealityServerName: l.RealityServerName,
-	}).fill()
-}
-
-// fill defaults facts migration may leave empty; paths never default — a default is an obvious path.
-func (t *Transport) fill() *Transport {
-	out := *t
-	if out.GRPC == "" {
-		out.GRPC = DefaultGRPC
-	}
-	if out.RealityServerName == "" {
-		out.RealityServerName = DefaultRealitySNI
-	}
-	return &out
-}
-
-func (t *Transport) XHTTPPath() string   { return t.fill().XHTTP }
-func (t *Transport) WSPath() string      { return t.fill().WS }
-func (t *Transport) UpgradePath() string { return t.fill().Upgrade }
-func (t *Transport) GRPCService() string { return t.fill().GRPC }
-
-// RealitySNI returns the reality handshake SNI with the default applied.
-func (t *Transport) RealitySNI() string { return t.fill().RealityServerName }
+func (t *Transport) XHTTPPath() string   { return t.XHTTP }
+func (t *Transport) WSPath() string      { return t.WS }
+func (t *Transport) UpgradePath() string { return t.Upgrade }
+func (t *Transport) GRPCService() string { return t.GRPC }
+func (t *Transport) RealitySNI() string  { return t.RealityServerName }
 
 func (t *Transport) SubPath(hash string) string {
-	return strings.ReplaceAll(t.fill().Sub, HashToken, safe(hash))
+	return strings.ReplaceAll(t.Sub, HashToken, safe(hash))
 }
 
 func (t *Transport) SubURL(domain, hash string) string {
@@ -120,24 +74,22 @@ func (t *Transport) SubURL(domain, hash string) string {
 
 // SubLocation renders the nginx location that matches any per-client hash inside the stored subscription wrapper.
 func (t *Transport) SubLocation() string {
-	sub := t.fill().Sub
-	prefix, suffix, found := strings.Cut(sub, HashToken)
+	prefix, suffix, found := strings.Cut(t.Sub, HashToken)
 	if !found {
-		return "^" + regexp.QuoteMeta(sub) + "$"
+		return "^" + regexp.QuoteMeta(t.Sub) + "$"
 	}
 	return "^" + regexp.QuoteMeta(prefix) + "(" + SubHashPattern + ")" + regexp.QuoteMeta(suffix) + "$"
 }
 
 // DoHPath is the private DoH endpoint: the same random prefix the subscription wrapper uses, so one secret guards both.
 func (t *Transport) DoHPath() string {
-	prefix, _, _ := strings.Cut(t.fill().Sub, HashToken)
+	prefix, _, _ := strings.Cut(t.Sub, HashToken)
 	return strings.TrimSuffix(prefix, "/") + "/dns-query"
 }
 
 // Rev fingerprints paths + gRPC + SNI — exactly the fields inside client links.
 func (t *Transport) Rev() string {
-	f := t.fill()
-	parts := []string{f.XHTTP, f.WS, f.Upgrade, f.Sub, f.GRPC, f.RealityServerName}
+	parts := []string{t.XHTTP, t.WS, t.Upgrade, t.Sub, t.GRPC, t.RealityServerName}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return hex.EncodeToString(sum[:])[:8]
 }
