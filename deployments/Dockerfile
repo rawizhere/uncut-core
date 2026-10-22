@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned: these sources define the whole anti-probing behavior (FakeTLS
-# ClientHello checks, fallback to the real domain), so a floating HEAD would move the camouflage under the binary.
+# Pinned: the plain backend tproxy relays to; a floating HEAD would change the
+# middle-proxy protocol under the bridge. FakeTLS lives in sing-box's mtproxy inbound.
 ARG MTProxy_COMMIT=f36d8af769ffaeac36978d38c2c0f6d1104c2137
 RUN git clone https://github.com/TelegramMessenger/MTProxy.git /tmp/MTProxy \
     && cd /tmp/MTProxy \

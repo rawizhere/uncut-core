@@ -542,9 +542,9 @@ func setMTProtoTLSCmd() *cobra.Command {
 				return err
 			}
 			if result == "" {
-				fmt.Println("MTProto FakeTLS disabled: the FakeTLS instance and its SNI branch are gone")
+				fmt.Println("MTProto FakeTLS disabled: the mtproxy inbound and its SNI branch are gone")
 			} else {
-				fmt.Printf("MTProto FakeTLS enabled: %s\nFakeTLS link is printed by `raw menu` (item 13)\n", result)
+				fmt.Printf("MTProto FakeTLS enabled: %s\nFakeTLS link is printed by `raw info`\n", result)
 			}
 			return nil
 		},

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
+	"github.com/rawizhere/uncut-core/internal/links"
 )
 
 func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, error) {
@@ -23,6 +24,9 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 		if inbound != nil {
 			inbounds = append(inbounds, inbound)
 		}
+	}
+	if settings.MTProtoTLSDomain != "" && settings.MTProtoRawSecret != "" {
+		inbounds = append(inbounds, mtproxyInbound(settings))
 	}
 
 	return json.MarshalIndent(map[string]any{
@@ -44,6 +48,22 @@ func allowedUsers(clients []config.Client, proto string, user func(config.Client
 }
 
 func vlessUser(c config.Client) map[string]string { return map[string]string{"uuid": c.UUID} }
+
+// mtproxyInbound is the FakeTLS branch behind the SNI map; mtg parses the same ee-secret the client link carries, so issued links stay valid.
+func mtproxyInbound(settings config.Settings) map[string]any {
+	return map[string]any{
+		"type":        "mtproxy",
+		"tag":         "mtproxy-faketls",
+		"listen":      "127.0.0.1",
+		"listen_port": 2399,
+		"users": []map[string]string{{
+			"name":   "default",
+			"secret": links.MTProtoFakeTLSSecret(settings.MTProtoRawSecret, settings.MTProtoTLSDomain),
+		}},
+		// Probes without the secret are relayed to the mask domain's real 443.
+		"domain_fronting_port": 443,
+	}
+}
 
 func generateInbound(proto string, settings config.Settings, clients []config.Client) (map[string]any, error) {
 

@@ -478,13 +478,14 @@ func (m *Menu) runSpeedtest(ctx context.Context) {
 func (m *Menu) showTGSecret() {
 	domain, _ := m.store.GetSetting("domain")
 	raw, _ := m.store.GetSetting("mtproto_raw_secret")
+	webSecret, _ := m.store.GetSetting("webproxy_secret")
 	tlsDomain, _ := m.store.GetSetting("mtproto_tls_domain")
 
 	fmt.Println("\n=== Telegram Web Proxy ===")
 	fmt.Printf("Host:       %s\n", domain)
 	fmt.Printf("Port:       443\n")
-	if raw != "" {
-		fmt.Printf("Bridge URL: %s\n", links.BridgeURL(domain, raw))
+	if webSecret != "" {
+		fmt.Printf("Bridge URL: %s\n", links.BridgeURL(domain, webSecret))
 	}
 	// The FakeTLS link exists only when the branch is on; the old print was dead on arrival.
 	if raw != "" && tlsDomain != "" {
@@ -513,7 +514,7 @@ func (m *Menu) changeMTProtoTLS(ctx context.Context) {
 	if result == "" {
 		fmt.Println("\nMTProto FakeTLS disabled.")
 	} else {
-		fmt.Printf("\nMTProto FakeTLS enabled: %s (second instance on 2399)\n", result)
+		fmt.Printf("\nMTProto FakeTLS enabled: %s (sing-box mtproxy inbound on 2399)\n", result)
 	}
 }
 

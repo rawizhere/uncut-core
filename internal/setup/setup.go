@@ -66,7 +66,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	}
 
 	// Node secrets: hex of n random bytes, generated once.
-	for key, n := range map[string]int{"reality_short_id": 8, "mtproto_raw_secret": 16, "hysteria2_obfs": 16} {
+	for key, n := range map[string]int{"reality_short_id": 8, "mtproto_raw_secret": 16, "webproxy_secret": 16, "hysteria2_obfs": 16} {
 		if get(store, key) != "" {
 			continue
 		}
@@ -141,6 +141,7 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		Hysteria2UpMbps:   get(store, "hysteria2_up_mbps"),
 		Hysteria2DownMbps: get(store, "hysteria2_down_mbps"),
 		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
+		WebProxySecret:    get(store, "webproxy_secret"),
 		MTProtoTLSDomain:  get(store, "mtproto_tls_domain"),
 	}
 
@@ -217,7 +218,7 @@ func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor
 		return fmt.Errorf("write nginx files: %w", err)
 	}
 
-	if err := tproxy.WriteConfig(opts.InstallDir, settings.Domain, settings.MTProtoRawSecret, tproxy.DefaultPublicDir); err != nil {
+	if err := tproxy.WriteConfig(opts.InstallDir, settings.Domain, settings.WebProxySecret, tproxy.DefaultPublicDir); err != nil {
 		return fmt.Errorf("write tproxy config: %w", err)
 	}
 

@@ -140,6 +140,8 @@ type Settings struct {
 	SubsDir           string   `json:"subs_dir,omitempty"`
 	LogDir            string   `json:"log_dir,omitempty"`
 	MTProtoRawSecret  string   `json:"mtproto_raw_secret,omitempty"`
+	// WebProxySecret: the tproxy bridge's own 16 bytes, so a leaked webproxy link cannot open the FakeTLS branch.
+	WebProxySecret string `json:"webproxy_secret,omitempty"`
 	// MTProtoTLSDomain is the optional third-party domain for the FakeTLS branch. Empty means the branch is off.
 	MTProtoTLSDomain string               `json:"mtproto_tls_domain,omitempty"`
 	Transport        *transport.Transport `json:"transport,omitempty"`

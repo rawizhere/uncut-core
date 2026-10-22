@@ -394,13 +394,13 @@ func GetInfo(store *db.Store, opts setup.Options) (*Info, error) {
 	}
 
 	bridgeURL, webproxyURL, mtprotoURL := "", "", ""
-	if settings.MTProtoRawSecret != "" {
-		bridgeURL = links.BridgeURL(settings.Domain, settings.MTProtoRawSecret)
-		webproxyURL = links.WebProxyURL(settings.Domain, settings.MTProtoRawSecret)
-		if settings.MTProtoTLSDomain != "" {
-			mtprotoURL = links.TMeProxyURL(settings.Domain,
-				links.MTProtoFakeTLSSecret(settings.MTProtoRawSecret, settings.MTProtoTLSDomain))
-		}
+	if settings.WebProxySecret != "" {
+		bridgeURL = links.BridgeURL(settings.Domain, settings.WebProxySecret)
+		webproxyURL = links.WebProxyURL(settings.Domain, settings.WebProxySecret)
+	}
+	if settings.MTProtoRawSecret != "" && settings.MTProtoTLSDomain != "" {
+		mtprotoURL = links.TMeProxyURL(settings.Domain,
+			links.MTProtoFakeTLSSecret(settings.MTProtoRawSecret, settings.MTProtoTLSDomain))
 	}
 
 	return &Info{

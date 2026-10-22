@@ -20,73 +20,26 @@ import (
 	"github.com/rawizhere/uncut-core/internal/updater"
 )
 
-// mtprotoSpec builds one mtproto-proxy instance on the given listen/stats pair; impersonateDomain turns it into the FakeTLS branch.
-func mtprotoSpec(settings *config.Settings, name, port, statsPort, impersonateDomain, logsDir string) supervisor.ProcessSpec {
+// mtprotoSpec builds the plain mtproto-proxy behind tproxy; only the bridge reaches 2398, so it takes only the webproxy secret.
+func mtprotoSpec(settings *config.Settings, logsDir string) supervisor.ProcessSpec {
 	args := []string{
 		"-u", "nobody",
-		"-p", statsPort,
-		"-H", port,
-		"-S", settings.MTProtoRawSecret,
+		"-p", "8888",
+		"-H", "2398",
+		"-S", settings.WebProxySecret,
 		"--aes-pwd", "/etc/mtproxy/proxy-secret",
 		"-M", "1",
 		"-C", "4096",
-	}
-	if impersonateDomain != "" {
-		args = append(args, "-D", impersonateDomain)
 	}
 	if settings.IP != "" {
 		args = append(args, "--nat-info", fmt.Sprintf("127.0.0.1:%s", settings.IP))
 	}
 	args = append(args, "/etc/mtproxy/proxy-multi.conf")
 	return supervisor.ProcessSpec{
-		Name:    name,
+		Name:    "mtproto-proxy",
 		Command: "mtproto-proxy",
 		Args:    args,
-		LogPath: filepath.Join(logsDir, name+".log"),
-	}
-}
-
-// mtProtoTLSSpec builds the FakeTLS instance: the same raw secret as the plain instance, but -D impersonates the third-party domain.
-func mtProtoTLSSpec(settings *config.Settings, logsDir string) supervisor.ProcessSpec {
-	return mtprotoSpec(settings, "mtproto-proxy-tls", "2399", "8889", settings.MTProtoTLSDomain, logsDir)
-}
-
-// syncMtProtoTLS reconciles the FakeTLS instance with the live setting: set-mtproto-tls runs in another process and cannot reach the supervisor.
-func syncMtProtoTLS(ctx context.Context, sup *supervisor.Supervisor, store *db.Store, opts setup.Options) {
-	const name = "mtproto-proxy-tls"
-	last, _ := store.GetSetting("mtproto_tls_domain")
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			domain, _ := store.GetSetting("mtproto_tls_domain")
-			if domain == last {
-				continue
-			}
-			last = domain
-			switch domain {
-			case "":
-				if err := sup.StopProcess(name); err != nil {
-					slog.Warn("FakeTLS stop failed", "error", err)
-				}
-				slog.Info("FakeTLS disabled; mtproto-proxy-tls stopped")
-			default:
-				settings, err := setup.Load(store, opts)
-				if err != nil {
-					slog.Warn("FakeTLS sync failed", "error", err)
-					last = ""
-					continue
-				}
-				sup.ReplaceSpec(name, mtProtoTLSSpec(&settings, filepath.Join(opts.InstallDir, "logs")))
-				if err := sup.RestartProcess(name); err != nil {
-					slog.Warn("FakeTLS restart failed", "error", err)
-				}
-				slog.Info("FakeTLS enabled; mtproto-proxy-tls restarted", "domain", domain)
-			}
-		}
+		LogPath: filepath.Join(logsDir, "mtproto-proxy.log"),
 	}
 }
 
@@ -122,11 +75,8 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 		Command: "nginx",
 		Args:    []string{"-g", "daemon off;"},
 	})
-	sup.AddProcess(mtprotoSpec(&settings, "mtproto-proxy", "2398", "8888", "", logsDir))
-	// Second instance: -D would disable the plain transport the bridge needs. syncMtProtoTLS keeps it in step with the live setting later.
-	if settings.MTProtoTLSDomain != "" {
-		sup.AddProcess(mtProtoTLSSpec(&settings, logsDir))
-	}
+	// The FakeTLS branch is sing-box's mtproxy inbound, applied by the sing-box reload; this instance only serves the bridge.
+	sup.AddProcess(mtprotoSpec(&settings, logsDir))
 	sup.AddProcess(supervisor.ProcessSpec{
 		Name:    "tproxy-server",
 		Command: "tproxy-server",
@@ -151,7 +101,7 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 
 	// Bridge failure modes look identical from outside; this logs which.
 	go func() {
-		if err := tproxy.CheckBridge(ctx, settings.Domain, settings.MTProtoRawSecret); err != nil {
+		if err := tproxy.CheckBridge(ctx, settings.Domain, settings.WebProxySecret); err != nil {
 			slog.Warn("Telegram bridge self-check failed", "error", err)
 			return
 		}
@@ -175,7 +125,6 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 
 	// change-domain runs in another process and cannot restart this daemon's tproxy child; watch the files and restart it when they actually change.
 	go watchTproxyConfig(ctx, sup, opts.InstallDir)
-	go syncMtProtoTLS(ctx, sup, store, opts)
 
 	go serveHealth(ctx, sup)
 
