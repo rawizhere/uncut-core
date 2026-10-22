@@ -79,7 +79,7 @@ RUN mkdir -p /etc/mtproxy \
 
 # Install Sing-Box Extended release. Pinned on purpose: the fleet runs one
 # version and nodes are upgraded by hand, never by rebuilding against latest.
-ARG SINGBOX_EXT_VERSION=1.14.1-extended-2.7.2
+ARG SINGBOX_EXT_VERSION=1.14.3-extended-2.7.3
 RUN ARCH=$(dpkg --print-architecture) \
     && curl -fsSL "https://github.com/shtorm-7/sing-box-extended/releases/download/v${SINGBOX_EXT_VERSION}/sing-box-${SINGBOX_EXT_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sing-box.tar.gz \
     && tar -xzf /tmp/sing-box.tar.gz -C /tmp \
