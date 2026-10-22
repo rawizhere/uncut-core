@@ -22,7 +22,7 @@ const (
 	// RealityInboundPort and NginxHTTPSBackendPort: the loopback pair behind the SNI split.
 	RealityInboundPort    = 8443
 	NginxHTTPSBackendPort = 8442
-	// MTProtoTLSInboundPort: loopback FakeTLS instance; 2398 stays plain for tproxy.
+	// MTProtoTLSInboundPort: sing-box mtproxy inbound (FakeTLS); 2398 stays plain for tproxy.
 	MTProtoTLSInboundPort = 2399
 )
 
@@ -196,6 +196,8 @@ server {
     server_name _;
     server_tokens off;
     ssl_reject_handshake on;
+    # The default server's SSL context answers the ClientHello before SNI switches it, so the group list must be pinned here too.
+    ssl_ecdh_curve X25519:prime256v1;
 }
 
 {{if .Cert}}server {
@@ -212,6 +214,8 @@ server {
     ssl_certificate {{.InstallDir}}/certs/certificates/{{.Domain}}.crt;
     ssl_certificate_key {{.InstallDir}}/certs/certificates/{{.Domain}}.key;
     ssl_protocols TLSv1.2 TLSv1.3;
+    # Telegram Android's web proxy client fails when X25519MLKEM768 is offered, which newer OpenSSL enables by default.
+    ssl_ecdh_curve X25519:prime256v1;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
     ssl_prefer_server_ciphers off;
     ssl_session_cache shared:SSL:10m;
@@ -336,6 +340,8 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $remote_addr;
         if ($arg_bridge != "") {
+            # The query carries the bridge capability; a log line would leak it.
+            access_log off;
             proxy_pass http://127.0.0.1:{{.TelegramPort}};
             break;
         }
