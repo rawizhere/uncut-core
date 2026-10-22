@@ -2,11 +2,13 @@ package core
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -42,8 +44,8 @@ func GenerateVLESSRealityLink(client config.Client, s config.Settings) string {
 	sni := s.RealityServerName
 	// 8443 is the loopback reality inbound; 443 is shared with nginx by SNI split.
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=tcp&encryption=none&security=reality&pbk=%s&fp=chrome&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision#%s",
-		client.UUID, s.Domain, s.RealityPubKey, sni, s.RealityShortID, linkLabel(client.Name, "reality", s.Tag),
+		"vless://%s@%s:443?type=tcp&encryption=none&security=reality&pbk=%s&fp=%s&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision#%s",
+		client.UUID, s.Domain, s.RealityPubKey, s.Fingerprint, sni, s.RealityShortID, linkLabel(client.Name, "reality", s.Tag),
 	)
 }
 
@@ -74,17 +76,30 @@ func GenerateVLESSWSLink(client config.Client, s config.Settings) string {
 	encodedPath := url.PathEscape(path)
 	// No ed: some converters drop early_data_header_name and build a dead ws outbound.
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=chrome#%s",
-		client.UUID, s.Domain, encodedPath, linkLabel(client.Name, "ws", s.Tag),
+		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=%s#%s",
+		client.UUID, s.Domain, encodedPath, s.Fingerprint, linkLabel(client.Name, "ws", s.Tag),
 	)
+}
+
+// xhttpExtra carries the client-side burst shaping: xmux keeps one long-lived
+// connection per host instead of a fan of fresh handshakes per request burst.
+func xhttpExtra() string {
+	extra, _ := json.Marshal(map[string]any{
+		"xmux": map[string]string{
+			"maxConcurrency":   "16-32",
+			"hMaxReusableSecs": "300",
+		},
+		"xPaddingBytes": "100-2500",
+	})
+	return base64.RawURLEncoding.EncodeToString(extra)
 }
 
 func GenerateXHTTPStealthLink(client config.Client, s config.Settings) string {
 	path := s.Transport.XHTTPPath()
 	encodedPath := url.PathEscape(path)
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=packet-up&host=%s&fp=chrome#%s",
-		client.UUID, s.Domain, encodedPath, s.Domain, linkLabel(client.Name, "xhttp", s.Tag),
+		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=packet-up&host=%s&fp=%s&extra=%s#%s",
+		client.UUID, s.Domain, encodedPath, s.Domain, s.Fingerprint, xhttpExtra(), linkLabel(client.Name, "xhttp", s.Tag),
 	)
 }
 
@@ -92,85 +107,51 @@ func GenerateVLESSHTTPUpgradeLink(client config.Client, s config.Settings) strin
 	path := s.Transport.UpgradePath()
 	encodedPath := url.PathEscape(path)
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=chrome#%s",
-		client.UUID, s.Domain, encodedPath, s.Domain, linkLabel(client.Name, "httpupgrade", s.Tag),
+		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=%s#%s",
+		client.UUID, s.Domain, encodedPath, s.Domain, s.Fingerprint, linkLabel(client.Name, "httpupgrade", s.Tag),
 	)
 }
 
 func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=grpc&security=tls&serviceName=%s&encryption=none&host=%s&fp=chrome#%s",
-		client.UUID, s.Domain, s.Transport.GRPCService(), s.Domain, linkLabel(client.Name, "grpc", s.Tag),
+		"vless://%s@%s:443?type=grpc&security=tls&serviceName=%s&encryption=none&host=%s&fp=%s#%s",
+		client.UUID, s.Domain, s.Transport.GRPCService(), s.Domain, s.Fingerprint, linkLabel(client.Name, "grpc", s.Tag),
 	)
 }
 
 func GenerateClientLinks(client config.Client, s config.Settings) []string {
-	activeServerProtos := config.ResolveProtocols(s.Protocols)
-
-	serverProtoMap := make(map[string]bool)
-	for _, p := range activeServerProtos {
-		serverProtoMap[strings.TrimSpace(p)] = true
-	}
-
-	// Stored client rows predate the hysteria2 swap: normalize before matching, and rows may hold both the retired name and the replacement.
-	seen := make(map[string]bool, len(client.Protocols))
-	clientProtos := make([]string, 0, len(client.Protocols))
-	for _, cp := range client.Protocols {
-		if strings.TrimSpace(cp) == "tuic" {
-			cp = string(config.ProtoHysteria2)
-		}
-		if seen[cp] {
-			continue
-		}
-		seen[cp] = true
-		clientProtos = append(clientProtos, cp)
-	}
-	if !client.ProtocolsExplicit {
+	server := config.ResolveProtocols(s.Protocols)
+	protos := client.Protocols
+	if !client.ProtocolsExplicit || len(protos) == 0 {
 		// Non-explicit lists are creation snapshots: they merge in new server protocols. Explicit is an allowlist — off stays off.
-		for _, sp := range activeServerProtos {
-			sp = strings.TrimSpace(sp)
-			if sp == "" {
-				continue
-			}
-			found := false
-			for _, cp := range clientProtos {
-				if strings.TrimSpace(cp) == sp {
-					found = true
-					break
-				}
-			}
-			if !found {
-				clientProtos = append(clientProtos, sp)
-			}
-		}
-	}
-	if len(clientProtos) == 0 {
-		clientProtos = activeServerProtos
+		protos = append(slices.Clone(protos), server...)
 	}
 
 	links := make([]string, 0)
-	for _, proto := range clientProtos {
-		proto = strings.TrimSpace(proto)
-		if !serverProtoMap[proto] {
+	for _, proto := range protos {
+		if !slices.Contains(server, proto) {
 			continue
 		}
-
-		switch proto {
-		case string(config.ProtoVLESSReality):
-			links = append(links, GenerateVLESSRealityLink(client, s))
-		case string(config.ProtoHysteria2):
-			links = append(links, GenerateHysteria2Link(client, s))
-		case string(config.ProtoVLESSWS):
-			links = append(links, GenerateVLESSWSLink(client, s))
-		case string(config.ProtoXHTTPStealth):
-			links = append(links, GenerateXHTTPStealthLink(client, s))
-		case string(config.ProtoVLESSHTTPUpgrade):
-			links = append(links, GenerateVLESSHTTPUpgradeLink(client, s))
-		case string(config.ProtoVLESSGRPC):
-			links = append(links, GenerateVLESSGRPCLink(client, s))
+		var link string
+		switch config.InboundProtocol(proto) {
+		case config.ProtoVLESSReality:
+			link = GenerateVLESSRealityLink(client, s)
+		case config.ProtoHysteria2:
+			link = GenerateHysteria2Link(client, s)
+		case config.ProtoVLESSWS:
+			link = GenerateVLESSWSLink(client, s)
+		case config.ProtoXHTTPStealth:
+			link = GenerateXHTTPStealthLink(client, s)
+		case config.ProtoVLESSHTTPUpgrade:
+			link = GenerateVLESSHTTPUpgradeLink(client, s)
+		case config.ProtoVLESSGRPC:
+			link = GenerateVLESSGRPCLink(client, s)
+		}
+		// One link per protocol: the merge above and old rows can repeat one.
+		if !slices.Contains(links, link) {
+			links = append(links, link)
 		}
 	}
-
 	return links
 }
 
@@ -210,7 +191,7 @@ func RegenerateAllSubscriptions(store *db.Store, subDir string, s config.Setting
 
 	for _, client := range clients {
 		if client.SubHash == "" {
-			client.SubHash = GenerateSubToken()
+			client.SubHash = RandomHex(16)
 			if err := store.AddClient(client); err != nil {
 				return fmt.Errorf("persist sub token for %s: %w", client.Name, err)
 			}

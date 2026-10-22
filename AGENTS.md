@@ -19,6 +19,8 @@ Ask the operator first. Do not start without answers:
 4. Node tag — a short label appended to client links (default: de).
 5. Fresh server, or a previous release on it (then clean it first, see below).
 6. MTProto FakeTLS mask domain, if wanted; pick a well-known non-Russian site.
+   FakeTLS (sing-box `mtproxy` inbound) and the WEB proxy bridge use separate
+   secrets, `mtproto_raw_secret` and `webproxy_secret`.
 
 Then, in order:
 

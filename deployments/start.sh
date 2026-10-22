@@ -8,11 +8,7 @@ mkdir -p /var/www/html/.well-known/acme-challenge
 
 # Setup daily logrotate cron job
 if [ -f /etc/logrotate.d/uncut-nginx ]; then
-    if command -v cron >/dev/null 2>&1; then
-        cron || true
-    elif command -v crond >/dev/null 2>&1; then
-        crond -b -l 8 || true
-    fi
+    cron || true
 fi
 
 exec /usr/local/bin/raw --data-dir=/opt/uncut/data --install-dir=/opt/sing-box "$@"

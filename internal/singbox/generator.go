@@ -1,30 +1,17 @@
 package singbox
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
+	"github.com/rawizhere/uncut-core/internal/links"
 )
-
-type Config struct {
-	Log       LogConfig        `json:"log"`
-	Inbounds  []map[string]any `json:"inbounds"`
-	Outbounds []OutboundConfig `json:"outbounds"`
-}
-
-type LogConfig struct {
-	Level     string `json:"level"`
-	Timestamp bool   `json:"timestamp"`
-}
-
-type OutboundConfig struct {
-	Type string `json:"type"`
-	Tag  string `json:"tag"`
-}
 
 func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, error) {
 	inbounds := make([]map[string]any, 0)
@@ -38,22 +25,44 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 			inbounds = append(inbounds, inbound)
 		}
 	}
-
-	cfg := Config{
-		Log: LogConfig{
-			Level:     "info",
-			Timestamp: true,
-		},
-		Inbounds: inbounds,
-		Outbounds: []OutboundConfig{
-			{
-				Type: "direct",
-				Tag:  "direct",
-			},
-		},
+	if settings.MTProtoTLSDomain != "" && settings.MTProtoRawSecret != "" {
+		inbounds = append(inbounds, mtproxyInbound(settings))
 	}
 
-	return json.MarshalIndent(cfg, "", "  ")
+	return json.MarshalIndent(map[string]any{
+		"log":       map[string]any{"level": "info", "timestamp": true},
+		"inbounds":  inbounds,
+		"outbounds": []map[string]string{{"type": "direct", "tag": "direct"}},
+	}, "", "  ")
+}
+
+// allowedUsers renders every client allowed on proto; an empty client list means all protocols.
+func allowedUsers(clients []config.Client, proto string, user func(config.Client) map[string]string) []map[string]string {
+	out := make([]map[string]string, 0)
+	for _, c := range clients {
+		if c.UUID != "" && (len(c.Protocols) == 0 || slices.Contains(c.Protocols, proto)) {
+			out = append(out, user(c))
+		}
+	}
+	return out
+}
+
+func vlessUser(c config.Client) map[string]string { return map[string]string{"uuid": c.UUID} }
+
+// mtproxyInbound is the FakeTLS branch behind the SNI map; mtg parses the same ee-secret the client link carries, so issued links stay valid.
+func mtproxyInbound(settings config.Settings) map[string]any {
+	return map[string]any{
+		"type":        "mtproxy",
+		"tag":         "mtproxy-faketls",
+		"listen":      "127.0.0.1",
+		"listen_port": 2399,
+		"users": []map[string]string{{
+			"name":   "default",
+			"secret": links.MTProtoFakeTLSSecret(settings.MTProtoRawSecret, settings.MTProtoTLSDomain),
+		}},
+		// Probes without the secret are relayed to the mask domain's real 443.
+		"domain_fronting_port": 443,
+	}
 }
 
 func generateInbound(proto string, settings config.Settings, clients []config.Client) (map[string]any, error) {
@@ -65,7 +74,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 
 	switch proto {
 	case string(config.ProtoVLESSWS):
-		users := filterVLESSUsers(clients, proto)
+		users := allowedUsers(clients, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "vless-ws",
@@ -81,7 +90,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoXHTTPStealth):
-		users := filterVLESSUsers(clients, proto)
+		users := allowedUsers(clients, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "xhttp-stealth",
@@ -101,7 +110,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoVLESSHTTPUpgrade):
-		users := filterVLESSUsers(clients, proto)
+		users := allowedUsers(clients, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "vless-httpupgrade",
@@ -116,7 +125,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoVLESSGRPC):
-		users := filterVLESSUsers(clients, proto)
+		users := allowedUsers(clients, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "vless-grpc",
@@ -130,7 +139,9 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoVLESSReality):
-		users := filterRealityUsers(clients, proto)
+		users := allowedUsers(clients, proto, func(c config.Client) map[string]string {
+			return map[string]string{"uuid": c.UUID, "flow": "xtls-rprx-vision"}
+		})
 		// Client SNI = handshake target: nginx hands over the hello (ssl_preread).
 		sni := settings.RealityServerName
 
@@ -163,7 +174,9 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoHysteria2):
-		users := filterHysteria2Users(clients, proto)
+		users := allowedUsers(clients, proto, func(c config.Client) map[string]string {
+			return map[string]string{"password": cmp.Or(c.Password, c.UUID)}
+		})
 		domain := settings.Domain
 		certPath := filepath.Join(installDir, "certs", "certificates", domain+".crt")
 		keyPath := filepath.Join(installDir, "certs", "certificates", domain+".key")
@@ -196,54 +209,4 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 	}
 
 	return nil, nil
-}
-
-func clientHasProto(client config.Client, proto string) bool {
-	if len(client.Protocols) == 0 {
-		return true
-	}
-	for _, p := range client.Protocols {
-		p = strings.TrimSpace(p)
-		if p == proto {
-			return true
-		}
-	}
-	return false
-}
-
-func filterVLESSUsers(clients []config.Client, proto string) []map[string]string {
-	users := make([]map[string]string, 0)
-	for _, c := range clients {
-		if c.UUID != "" && clientHasProto(c, proto) {
-			users = append(users, map[string]string{"uuid": c.UUID})
-		}
-	}
-	return users
-}
-
-func filterRealityUsers(clients []config.Client, proto string) []map[string]string {
-	users := make([]map[string]string, 0)
-	for _, c := range clients {
-		if c.UUID != "" && clientHasProto(c, proto) {
-			users = append(users, map[string]string{
-				"uuid": c.UUID,
-				"flow": "xtls-rprx-vision",
-			})
-		}
-	}
-	return users
-}
-
-func filterHysteria2Users(clients []config.Client, proto string) []map[string]string {
-	users := make([]map[string]string, 0)
-	for _, c := range clients {
-		if c.UUID != "" && clientHasProto(c, proto) {
-			pass := c.Password
-			if pass == "" {
-				pass = c.UUID
-			}
-			users = append(users, map[string]string{"password": pass})
-		}
-	}
-	return users
 }

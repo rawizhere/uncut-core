@@ -35,58 +35,34 @@ func (m *Menu) showLogsMenu(ctx context.Context) {
 			return
 		}
 
+		logs := filepath.Join(m.opts.DataDir, "logs")
 		switch logChoice {
 		case "singbox":
-			sbPath := "/opt/uncut/data/logs/sing-box.log"
-			if _, err := os.Stat(sbPath); err != nil {
-				sbPath = "/var/log/sing-box.log"
-			}
-			m.printLogFileTail(sbPath, 50, "Sing-box")
+			printLogFileTail(filepath.Join(logs, "sing-box.log"), "/var/log/sing-box.log", "Sing-box")
 		case "nginx_access":
-			accessPath := filepath.Join("/opt/uncut/data/logs/nginx/access.log")
-			if _, err := os.Stat(accessPath); err != nil {
-				accessPath = "/var/log/nginx/access.log"
-			}
-			m.printLogFileTail(accessPath, 50, "Nginx Access")
+			printLogFileTail(filepath.Join(logs, "nginx", "access.log"), "/var/log/nginx/access.log", "Nginx Access")
 		case "nginx_error":
-			errorPath := filepath.Join("/opt/uncut/data/logs/nginx/error.log")
-			if _, err := os.Stat(errorPath); err != nil {
-				errorPath = "/var/log/nginx/error.log"
-			}
-			m.printLogFileTail(errorPath, 50, "Nginx Error")
+			printLogFileTail(filepath.Join(logs, "nginx", "error.log"), "/var/log/nginx/error.log", "Nginx Error")
 		case "tg":
-			tgPath := "/opt/uncut/data/logs/tproxy-server.log"
-			if _, err := os.Stat(tgPath); err != nil {
-				tgPath = "/var/log/tproxy-server.log"
-			}
-			m.printLogFileTail(tgPath, 50, "Telegram Web Proxy")
+			printLogFileTail(filepath.Join(logs, "tproxy-server.log"), "/var/log/tproxy-server.log", "Telegram Web Proxy")
 		case "live":
 			m.streamLiveLogs(ctx)
 		}
 	}
 }
 
-func (m *Menu) printLogFileTail(path string, lines int, title string) {
-	fmt.Printf("\n=== %s (Last %d lines) ===\n", title, lines)
+// printLogFileTail prints the last 50 lines of path, or of fallback when path does not exist.
+func printLogFileTail(path, fallback, title string) {
 	if _, err := os.Stat(path); err != nil {
-		// Fallback to journalctl or supervisor logs
-		cmd := exec.Command("tail", "-n", fmt.Sprintf("%d", lines), path)
-		out, err := cmd.CombinedOutput()
-		if err != nil || len(out) == 0 {
-			fmt.Printf("Log file %s is empty or not found.\n\n", path)
-			return
-		}
-		fmt.Println(string(out))
+		path = fallback
+	}
+	fmt.Printf("\n=== %s (Last 50 lines) ===\n", title)
+	out, err := exec.Command("tail", "-n", "50", path).CombinedOutput()
+	if err != nil || len(out) == 0 {
+		fmt.Printf("Log file %s is empty or not found.\n\n", path)
 		return
 	}
-
-	cmd := exec.Command("tail", "-n", fmt.Sprintf("%d", lines), path)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		fmt.Printf("Error reading log: %v\n", err)
-	} else {
-		fmt.Println(string(out))
-	}
+	fmt.Println(string(out))
 	fmt.Println("==============================")
 }
 

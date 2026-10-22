@@ -84,26 +84,16 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, errors.New("client name is required")
 	}
 
-	appCfg, _ := config.LoadAppConfig()
+	appCfg := config.LoadAppConfig()
 	settings, err := setup.Ensure(ctx, store, appCfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("ensure setup: %w", err)
 	}
 
-	chosen := protos
-	if len(chosen) == 0 {
-		chosen = core.DefaultProtocols()
-	}
-	client, err := core.AddClient(store, name, chosen)
+	// An operator-passed --protocols is an explicit allowlist; none is a default snapshot.
+	client, err := core.AddClient(store, name, protos)
 	if err != nil {
 		return nil, err
-	}
-	if len(protos) > 0 {
-		// An operator-passed --protocols at add time is an explicit allowlist, not a creation snapshot.
-		client.ProtocolsExplicit = true
-		if err := store.AddClient(*client); err != nil {
-			return nil, fmt.Errorf("update client: %w", err)
-		}
 	}
 
 	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
@@ -122,7 +112,7 @@ func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, err
 	}
 
-	appCfg, _ := config.LoadAppConfig()
+	appCfg := config.LoadAppConfig()
 	settings, err := setup.Ensure(ctx, store, appCfg, opts)
 	if err != nil {
 		return nil, fmt.Errorf("ensure setup: %w", err)
@@ -158,16 +148,9 @@ func findClient(store *db.Store, name string) (*config.Client, error) {
 
 // SetClientProtocols makes an explicit allowlist: off stays off for the client.
 func SetClientProtocols(ctx context.Context, store *db.Store, opts setup.Options, name string, protocols []string) (*ClientView, error) {
-	sanitized := make([]string, 0, len(protocols))
-	for _, p := range protocols {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if !config.IsValidProtocol(p) {
-			return nil, fmt.Errorf("unknown protocol %q", p)
-		}
-		sanitized = append(sanitized, p)
+	sanitized, err := config.CleanProtocols(protocols)
+	if err != nil {
+		return nil, err
 	}
 	if len(sanitized) == 0 {
 		return nil, errors.New("at least one protocol is required; --inherit goes back to the server set")
@@ -309,7 +292,7 @@ func DeleteClient(ctx context.Context, store *db.Store, opts setup.Options, name
 
 // ListClients returns the node's clients plus the fqdn and raw secret link builders need.
 func ListClients(ctx context.Context, store *db.Store, opts setup.Options) (*ClientList, error) {
-	appCfg, _ := config.LoadAppConfig()
+	appCfg := config.LoadAppConfig()
 	settings, _ := setup.Ensure(ctx, store, appCfg, opts)
 
 	domain, _ := store.GetSetting("domain")
@@ -376,10 +359,7 @@ func ChangeDomain(ctx context.Context, store *db.Store, opts setup.Options, newD
 		return fmt.Errorf("update domain setting: %w", err)
 	}
 
-	appCfg, err := config.LoadAppConfig()
-	if err != nil {
-		return err
-	}
+	appCfg := config.LoadAppConfig()
 
 	mgr := acme.New(newDomain, appCfg.Email, opts.CertsDir(), opts.WebRoot)
 	if err := mgr.ForceRenew(); err != nil {
@@ -414,13 +394,13 @@ func GetInfo(store *db.Store, opts setup.Options) (*Info, error) {
 	}
 
 	bridgeURL, webproxyURL, mtprotoURL := "", "", ""
-	if settings.MTProtoRawSecret != "" {
-		bridgeURL = links.BridgeURL(settings.Domain, settings.MTProtoRawSecret)
-		webproxyURL = links.WebProxyURL(settings.Domain, settings.MTProtoRawSecret)
-		if settings.MTProtoTLSDomain != "" {
-			mtprotoURL = links.TMeProxyURL(settings.Domain,
-				links.MTProtoFakeTLSSecret(settings.MTProtoRawSecret, settings.MTProtoTLSDomain))
-		}
+	if settings.WebProxySecret != "" {
+		bridgeURL = links.BridgeURL(settings.Domain, settings.WebProxySecret)
+		webproxyURL = links.WebProxyURL(settings.Domain, settings.WebProxySecret)
+	}
+	if settings.MTProtoRawSecret != "" && settings.MTProtoTLSDomain != "" {
+		mtprotoURL = links.TMeProxyURL(settings.Domain,
+			links.MTProtoFakeTLSSecret(settings.MTProtoRawSecret, settings.MTProtoTLSDomain))
 	}
 
 	return &Info{
@@ -457,16 +437,9 @@ func RotatePaths(ctx context.Context, store *db.Store, opts setup.Options) (stri
 
 // SetProtocols replaces the server set; the explicit marker keeps the next daemon start from merging defaults back (which resurrected disabled ones).
 func SetProtocols(ctx context.Context, store *db.Store, opts setup.Options, protocols []string) ([]string, error) {
-	var resolved []string
-	for _, p := range protocols {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if !config.IsValidProtocol(p) {
-			return nil, fmt.Errorf("unknown protocol %q", p)
-		}
-		resolved = append(resolved, p)
+	resolved, err := config.CleanProtocols(protocols)
+	if err != nil {
+		return nil, err
 	}
 	if len(resolved) == 0 {
 		return nil, errors.New("at least one protocol is required")
@@ -527,4 +500,50 @@ func SetCert(store *db.Store, opts setup.Options, certData, keyData []byte) (str
 	_ = exec.Command("nginx", "-s", "reload").Run()
 	_ = exec.Command("pkill", "-HUP", "sing-box").Run()
 	return domain, nil
+}
+
+// Rebuild re-renders every config and reloads the services.
+func Rebuild(ctx context.Context, store *db.Store, opts setup.Options) error {
+	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+		return fmt.Errorf("rebuild configs: %w", err)
+	}
+	return nil
+}
+
+// SwitchSingbox installs a sing-box release and rebuilds, so the new binary takes over now rather than on the next reload.
+func SwitchSingbox(ctx context.Context, store *db.Store, opts setup.Options, version string) error {
+	if err := updater.InstallSingboxVersion(ctx, version, filepath.Join(opts.InstallDir, "bin", "sing-box")); err != nil {
+		return err
+	}
+	return Rebuild(ctx, store, opts)
+}
+
+// ExportBackup copies the database to backup_<timestamp>.db in the data directory and returns its path.
+func ExportBackup(opts setup.Options) (string, error) {
+	data, err := os.ReadFile(filepath.Join(opts.DataDir, "uncut.db"))
+	if err != nil {
+		return "", fmt.Errorf("read database: %w", err)
+	}
+	backupFile := filepath.Join(opts.DataDir, "backup_"+time.Now().Format("20060102_150405")+".db")
+	if err := os.WriteFile(backupFile, data, 0o600); err != nil {
+		return "", fmt.Errorf("write backup: %w", err)
+	}
+	return backupFile, nil
+}
+
+// Backups lists the backup files ExportBackup left in the data directory.
+func Backups(opts setup.Options) ([]string, error) {
+	return filepath.Glob(filepath.Join(opts.DataDir, "backup_*.db"))
+}
+
+// ImportBackup overwrites the database with a backup file and rebuilds from it.
+func ImportBackup(ctx context.Context, store *db.Store, opts setup.Options, file string) error {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("read backup: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(opts.DataDir, "uncut.db"), data, 0o600); err != nil {
+		return fmt.Errorf("restore database: %w", err)
+	}
+	return Rebuild(ctx, store, opts)
 }

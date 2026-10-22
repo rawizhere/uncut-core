@@ -3,13 +3,10 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/rawizhere/uncut-core/internal/acme"
 	"github.com/rawizhere/uncut-core/internal/config"
 	"github.com/rawizhere/uncut-core/internal/core"
 	"github.com/rawizhere/uncut-core/internal/db"
@@ -17,39 +14,27 @@ import (
 	"github.com/rawizhere/uncut-core/internal/nodeops"
 	"github.com/rawizhere/uncut-core/internal/qrcode"
 	"github.com/rawizhere/uncut-core/internal/setup"
-	"github.com/rawizhere/uncut-core/internal/supervisor"
 	"github.com/rawizhere/uncut-core/internal/system"
-	"github.com/rawizhere/uncut-core/internal/transport"
 	"github.com/rawizhere/uncut-core/internal/updater"
 )
 
+// Menu is the human front-end; every change goes through nodeops, same as the CLI.
 type Menu struct {
-	store      *db.Store
-	sup        *supervisor.Supervisor
-	installDir string
-	settings   *config.Settings
+	store *db.Store
+	opts  setup.Options
 }
 
-func NewMenu(store *db.Store, sup *supervisor.Supervisor, installDir string) *Menu {
-	return &Menu{
-		store:      store,
-		sup:        sup,
-		installDir: installDir,
-	}
+func NewMenu(store *db.Store, opts setup.Options) *Menu {
+	return &Menu{store: store, opts: opts}
 }
 
-// loaded reads the settings once and keeps them; rebuildAndReload drops the cache so screens never show a stale copy after a rebuild.
+// loaded reads the settings fresh each time, so a screen never shows a copy from before a nodeops change.
 func (m *Menu) loaded() *config.Settings {
-	if m.settings != nil {
-		return m.settings
-	}
-	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
-	s, err := setup.Load(m.store, opts)
+	s, err := setup.Load(m.store, m.opts)
 	if err != nil {
 		return nil
 	}
-	m.settings = &s
-	return m.settings
+	return &s
 }
 
 func (m *Menu) Run(ctx context.Context) error {
@@ -88,7 +73,7 @@ func (m *Menu) Run(ctx context.Context) error {
 		case "status":
 			m.showStatus()
 		case "clients":
-			m.listClients()
+			m.listClients(ctx)
 		case "add":
 			m.addClient(ctx)
 		case "del":
@@ -125,8 +110,8 @@ func (m *Menu) showStatus() {
 	clients, _ := m.store.GetClients()
 	activeProtos, _ := m.store.GetSetting("protocols")
 
-	host := system.GetHostMetrics("/opt/uncut/data")
-	ssl, _ := system.GetSSLMetrics(m.installDir, domain)
+	host := system.GetHostMetrics(m.opts.DataDir)
+	ssl, _ := system.GetSSLMetrics(m.opts.CertsDir(), domain)
 	doh := ""
 	if settings := m.loaded(); settings != nil && settings.Transport != nil {
 		doh = "https://" + domain + settings.Transport.DoHPath()
@@ -143,7 +128,7 @@ func (m *Menu) showStatus() {
 	fmt.Printf("Disk Usage:      %.1f GB / %.1f GB (%.1f%%)\n", host.DiskUsedGB, host.DiskTotalGB, host.DiskPercent)
 	fmt.Printf("System Uptime:   %s\n", host.UptimeFormatted)
 	fmt.Println("----------------------------------")
-	if v := updater.CurrentVersion(m.installDir); v != "" {
+	if v := updater.CurrentVersion(m.opts.InstallDir); v != "" {
 		fmt.Printf("Sing-box:        %s\n", v)
 	}
 	if doh != "" {
@@ -158,22 +143,17 @@ func (m *Menu) showStatus() {
 	fmt.Println("==================================")
 }
 
-func (m *Menu) listClients() {
-	domain, _ := m.store.GetSetting("domain")
-	clients, err := m.store.GetClients()
-	if err != nil || len(clients) == 0 {
+func (m *Menu) listClients(ctx context.Context) {
+	list, err := nodeops.ListClients(ctx, m.store, m.opts)
+	if err != nil || len(list.Clients) == 0 {
 		fmt.Println("\nNo active clients found.")
 		return
 	}
 
 	fmt.Println("\nActive Clients:")
-	for _, c := range clients {
-		subURL := m.subscriptionURL(domain, c.SubHash)
-		fmt.Printf("• %s (UUID: %s)\n  Subscription: %s\n", c.Name, c.UUID, subURL)
-		asciiQR, err := qrcode.GenerateASCII(subURL)
-		if err == nil {
-			fmt.Println(asciiQR)
-		}
+	for _, c := range list.Clients {
+		fmt.Printf("• %s (UUID: %s)\n  Subscription: %s\n", c.Name, c.UUID, c.Subscription)
+		printQR(c.Subscription)
 	}
 }
 
@@ -187,21 +167,14 @@ func (m *Menu) addClient(ctx context.Context) {
 		return
 	}
 
-	client, err := core.AddClientWithDefaultProtocols(m.store, name)
+	view, err := nodeops.AddClient(ctx, m.store, m.opts, name, nil)
 	if err != nil {
 		fmt.Printf("\nFailed to add client: %v\n\n", err)
 		return
 	}
 
-	m.rebuildAndReload(ctx)
-	domain, _ := m.store.GetSetting("domain")
-	subURL := m.subscriptionURL(domain, client.SubHash)
-	fmt.Printf("\nClient %s created successfully.\nSubscription URL: %s\n", client.Name, subURL)
-
-	qr, err := qrcode.GenerateASCII(subURL)
-	if err == nil {
-		fmt.Println(qr)
-	}
+	fmt.Printf("\nClient %s created successfully.\nSubscription URL: %s\n", view.Name, view.Subscription)
+	printQR(view.Subscription)
 }
 
 func (m *Menu) delClient(ctx context.Context) {
@@ -226,13 +199,10 @@ func (m *Menu) delClient(ctx context.Context) {
 		return
 	}
 
-	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
-	if err := core.DeleteClient(m.store, opts.SubsDir, targetUUID); err != nil {
+	if err := nodeops.DeleteClient(ctx, m.store, m.opts, targetUUID); err != nil {
 		fmt.Printf("\nError deleting client: %v\n", err)
 		return
 	}
-
-	m.rebuildAndReload(ctx)
 	fmt.Println("\nClient deleted successfully.")
 }
 
@@ -258,16 +228,14 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 		return
 	}
 
-	client, err := m.store.GetClientByUUID(selectedUUID)
-	if err != nil {
-		fmt.Printf("Client error: %v\n", err)
-		return
-	}
-
-	domain, _ := m.store.GetSetting("domain")
-	subURL := m.subscriptionURL(domain, client.SubHash)
-
 	for {
+		// Re-read every round: a protocol change below rewrites the client.
+		client, err := m.store.GetClientByUUID(selectedUUID)
+		if err != nil {
+			fmt.Printf("Client error: %v\n", err)
+			return
+		}
+
 		var action string
 		form := huh.NewForm(
 			huh.NewGroup(
@@ -277,6 +245,7 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 						huh.NewOption("1. View Subscription URL & QR", "sub"),
 						huh.NewOption("2. View Raw Outbound Links", "links"),
 						huh.NewOption("3. Edit Client Protocols", "protocols"),
+						huh.NewOption("4. Inherit Server Protocols", "inherit"),
 						huh.NewOption("0. Back", "back"),
 					).
 					Value(&action),
@@ -289,10 +258,9 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 
 		switch action {
 		case "sub":
+			subURL := m.subscriptionURL(client.SubHash)
 			fmt.Printf("\nSubscription URL: %s\n", subURL)
-			if qr, err := qrcode.GenerateASCII(subURL); err == nil {
-				fmt.Println(qr)
-			}
+			printQR(subURL)
 		case "links":
 			s := m.loaded()
 			if s == nil {
@@ -310,14 +278,14 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 				activeMap[p] = true
 			}
 			var currentSelected []string
-			for _, p := range config.ValidProtocols {
+			for _, p := range config.DefaultProtocols {
 				if activeMap[string(p)] || len(client.Protocols) == 0 {
 					currentSelected = append(currentSelected, string(p))
 				}
 			}
 
 			var protoOpts []huh.Option[string]
-			for _, p := range config.ValidProtocols {
+			for _, p := range config.DefaultProtocols {
 				protoOpts = append(protoOpts, huh.NewOption(string(p), string(p)))
 			}
 
@@ -330,10 +298,18 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 				),
 			)
 			if err := pForm.Run(); err == nil && len(currentSelected) > 0 {
-				_, _ = core.UpdateClientProtocols(m.store, client.UUID, currentSelected)
-				m.rebuildAndReload(ctx)
+				if _, err := nodeops.SetClientProtocols(ctx, m.store, m.opts, client.Name, currentSelected); err != nil {
+					fmt.Printf("Error: %v\n", err)
+					break
+				}
 				fmt.Println("\nClient protocols updated.")
 			}
+		case "inherit":
+			if _, err := nodeops.InheritClientProtocols(ctx, m.store, m.opts, client.Name); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				break
+			}
+			fmt.Println("\nClient now inherits the server protocol set.")
 		}
 	}
 }
@@ -350,14 +326,14 @@ func (m *Menu) manageProtocols(ctx context.Context) {
 	}
 
 	selected := make([]string, 0)
-	for _, p := range config.ValidProtocols {
+	for _, p := range config.DefaultProtocols {
 		if activeMap[string(p)] {
 			selected = append(selected, string(p))
 		}
 	}
 
 	var options []huh.Option[string]
-	for _, p := range config.ValidProtocols {
+	for _, p := range config.DefaultProtocols {
 		label := string(p)
 		switch p {
 		case config.ProtoVLESSReality:
@@ -394,11 +370,12 @@ func (m *Menu) manageProtocols(ctx context.Context) {
 		return
 	}
 
-	_ = m.store.SetSetting("protocols", strings.Join(selected, ","))
-	// Marked explicit so the next start does not merge the default set back in.
-	_ = m.store.SetSetting("protocols_explicit", "true")
-	m.rebuildAndReload(ctx)
-	fmt.Printf("\nProtocols updated successfully. Active: %s\n\n", strings.Join(selected, ", "))
+	applied, err := nodeops.SetProtocols(ctx, m.store, m.opts, selected)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	fmt.Printf("\nProtocols updated successfully. Active: %s\n\n", strings.Join(applied, ", "))
 }
 
 func (m *Menu) changeDomain(ctx context.Context) {
@@ -430,22 +407,11 @@ func (m *Menu) changeDomain(ctx context.Context) {
 		return
 	}
 
-	if err := m.store.SetSetting("domain", newDomain); err != nil {
+	fmt.Printf("\nRequesting TLS certificate for %s...\n", newDomain)
+	if err := nodeops.ChangeDomain(ctx, m.store, m.opts, newDomain); err != nil {
 		fmt.Printf("Failed to update domain: %v\n\n", err)
 		return
 	}
-
-	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
-	appCfg, err := config.LoadAppConfig()
-	if err == nil {
-		acmeMgr := acme.New(newDomain, appCfg.Email, opts.CertsDir(), opts.WebRoot)
-		fmt.Printf("\nRequesting TLS certificate for %s...\n", newDomain)
-		if err := acmeMgr.ForceRenew(); err != nil {
-			fmt.Printf("TLS certificate issuance warning: %v\n", err)
-		}
-	}
-
-	m.rebuildAndReload(ctx)
 	fmt.Printf("\nDomain successfully changed to %s and all subscriptions updated.\n\n", newDomain)
 }
 
@@ -464,8 +430,7 @@ func (m *Menu) changeRealitySNI(ctx context.Context) {
 		return
 	}
 
-	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
-	rev, err := nodeops.SetRealitySNI(ctx, m.store, opts, newSNI)
+	rev, err := nodeops.SetRealitySNI(ctx, m.store, m.opts, newSNI)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -486,17 +451,12 @@ func (m *Menu) rotatePaths(ctx context.Context) {
 		return
 	}
 
-	t, err := transport.Generate()
+	rev, err := nodeops.RotatePaths(ctx, m.store, m.opts)
 	if err != nil {
-		fmt.Printf("Error generating transport: %v\n", err)
+		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	if err := setup.SaveTransport(m.store, t); err != nil {
-		fmt.Printf("Error saving transport: %v\n", err)
-		return
-	}
-	m.rebuildAndReload(ctx)
-	fmt.Printf("\nTransport paths rotated, rev %s — every issued client link must be re-issued\n\n", t.Rev())
+	fmt.Printf("\nTransport paths rotated, rev %s — every issued client link must be re-issued\n\n", rev)
 }
 
 func (m *Menu) runSpeedtest(ctx context.Context) {
@@ -518,13 +478,14 @@ func (m *Menu) runSpeedtest(ctx context.Context) {
 func (m *Menu) showTGSecret() {
 	domain, _ := m.store.GetSetting("domain")
 	raw, _ := m.store.GetSetting("mtproto_raw_secret")
+	webSecret, _ := m.store.GetSetting("webproxy_secret")
 	tlsDomain, _ := m.store.GetSetting("mtproto_tls_domain")
 
 	fmt.Println("\n=== Telegram Web Proxy ===")
 	fmt.Printf("Host:       %s\n", domain)
 	fmt.Printf("Port:       443\n")
-	if raw != "" {
-		fmt.Printf("Bridge URL: %s\n", links.BridgeURL(domain, raw))
+	if webSecret != "" {
+		fmt.Printf("Bridge URL: %s\n", links.BridgeURL(domain, webSecret))
 	}
 	// The FakeTLS link exists only when the branch is on; the old print was dead on arrival.
 	if raw != "" && tlsDomain != "" {
@@ -545,8 +506,7 @@ func (m *Menu) changeMTProtoTLS(ctx context.Context) {
 	if err := form.Run(); err != nil {
 		return
 	}
-	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
-	result, err := nodeops.SetMTProtoTLSDomain(ctx, m.store, opts, input)
+	result, err := nodeops.SetMTProtoTLSDomain(ctx, m.store, m.opts, input)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return
@@ -554,7 +514,7 @@ func (m *Menu) changeMTProtoTLS(ctx context.Context) {
 	if result == "" {
 		fmt.Println("\nMTProto FakeTLS disabled.")
 	} else {
-		fmt.Printf("\nMTProto FakeTLS enabled: %s (second instance on 2399)\n", result)
+		fmt.Printf("\nMTProto FakeTLS enabled: %s (sing-box mtproxy inbound on 2399)\n", result)
 	}
 }
 
@@ -583,12 +543,15 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 
 		switch mAction {
 		case "restart":
-			m.rebuildAndReload(ctx)
+			if err := nodeops.Rebuild(ctx, m.store, m.opts); err != nil {
+				fmt.Printf("Error: %v\n", err)
+				break
+			}
 			fmt.Println("\nAll system services restarted successfully.")
 		case "singbox_version":
 			m.switchSingboxVersion(ctx)
 		case "renew_cert":
-			m.renewCertificate(ctx)
+			m.renewCertificate()
 		case "backup":
 			m.exportBackup()
 		case "import_backup":
@@ -597,7 +560,7 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 	}
 }
 
-func (m *Menu) renewCertificate(ctx context.Context) {
+func (m *Menu) renewCertificate() {
 	settings := m.loaded()
 	if settings == nil {
 		fmt.Println("Failed to load settings.")
@@ -605,14 +568,10 @@ func (m *Menu) renewCertificate(ctx context.Context) {
 	}
 
 	fmt.Printf("\nRequesting TLS certificate for %s...\n", settings.Domain)
-	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
-	acmeMgr := acme.New(settings.Domain, settings.Email, opts.CertsDir(), opts.WebRoot)
-	if err := acmeMgr.ForceRenew(); err != nil {
+	if err := nodeops.RenewCert(m.store, m.opts); err != nil {
 		fmt.Printf("Certificate issuance error: %v\n\n", err)
 		return
 	}
-
-	m.rebuildAndReload(ctx)
 	fmt.Println("TLS Certificate renewed successfully and services reloaded.")
 }
 
@@ -626,7 +585,7 @@ func (m *Menu) switchSingboxVersion(ctx context.Context) {
 		opts = append(opts, huh.NewOption("Enter a version manually", "?manual"))
 	}
 
-	current := updater.CurrentVersion(m.installDir)
+	current := updater.CurrentVersion(m.opts.InstallDir)
 	for _, v := range versions {
 		if v != "" && v == current {
 			opts = append(opts, huh.NewOption(v+" (current)", v))
@@ -638,7 +597,7 @@ func (m *Menu) switchSingboxVersion(ctx context.Context) {
 	var targetVer string
 	groups := huh.NewGroup(
 		huh.NewSelect[string]().
-			Title(fmt.Sprintf("Select Sing-box Extended Version (current: %s):", updater.CurrentVersion(m.installDir))).
+			Title(fmt.Sprintf("Select Sing-box Extended Version (current: %s):", current)).
 			Options(opts...).
 			Value(&targetVer),
 	)
@@ -656,27 +615,17 @@ func (m *Menu) switchSingboxVersion(ctx context.Context) {
 	}
 
 	fmt.Printf("Downloading and installing %s...\n", targetVer)
-	targetBinary := filepath.Join(m.installDir, "bin", "sing-box")
-	if err := updater.InstallSingboxVersion(ctx, targetVer, targetBinary); err != nil {
+	if err := nodeops.SwitchSingbox(ctx, m.store, m.opts, targetVer); err != nil {
 		fmt.Printf("Installation error: %v\n\n", err)
 		return
 	}
-
-	m.rebuildAndReload(ctx)
 	fmt.Printf("Sing-box updated to %s and service restarted.\n\n", targetVer)
 }
 
 func (m *Menu) exportBackup() {
-	dbPath := "/opt/uncut/data/uncut.db"
-	data, err := os.ReadFile(dbPath)
+	backupFile, err := nodeops.ExportBackup(m.opts)
 	if err != nil {
 		fmt.Printf("Backup failed: %v\n\n", err)
-		return
-	}
-
-	backupFile := fmt.Sprintf("/opt/uncut/data/backup_%s.db", time.Now().Format("20060102_150405"))
-	if err := os.WriteFile(backupFile, data, 0o600); err != nil {
-		fmt.Printf("Write backup failed: %v\n\n", err)
 		return
 	}
 
@@ -684,22 +633,13 @@ func (m *Menu) exportBackup() {
 }
 
 func (m *Menu) importBackup(ctx context.Context) {
-	dataDir := "/opt/uncut/data"
-	entries, err := os.ReadDir(dataDir)
+	backupFiles, err := nodeops.Backups(m.opts)
 	if err != nil {
 		fmt.Printf("Read data directory error: %v\n\n", err)
 		return
 	}
-
-	var backupFiles []string
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), "backup_") && strings.HasSuffix(e.Name(), ".db") {
-			backupFiles = append(backupFiles, filepath.Join(dataDir, e.Name()))
-		}
-	}
-
 	if len(backupFiles) == 0 {
-		fmt.Println("\nNo backup files found in /opt/uncut/data.")
+		fmt.Printf("\nNo backup files found in %s.\n", m.opts.DataDir)
 		return
 	}
 
@@ -734,34 +674,24 @@ func (m *Menu) importBackup(ctx context.Context) {
 		return
 	}
 
-	backupData, err := os.ReadFile(selectedFile)
-	if err != nil {
-		fmt.Printf("Failed to read backup: %v\n\n", err)
-		return
-	}
-
-	targetDB := filepath.Join(dataDir, "uncut.db")
-	if err := os.WriteFile(targetDB, backupData, 0o600); err != nil {
+	if err := nodeops.ImportBackup(ctx, m.store, m.opts, selectedFile); err != nil {
 		fmt.Printf("Failed to restore database: %v\n\n", err)
 		return
 	}
-
-	m.rebuildAndReload(ctx)
 	fmt.Printf("\nDatabase restored from %s and configurations reloaded.\n\n", filepath.Base(selectedFile))
 }
 
-func (m *Menu) rebuildAndReload(ctx context.Context) {
-	m.settings = nil
-	opts := setup.DefaultOptions("/opt/uncut/data", m.installDir)
-	if err := setup.RebuildAll(ctx, m.store, m.sup, opts); err != nil {
-		fmt.Printf("Error rebuilding configs: %v\n", err)
+// printQR prints the URL as an ASCII QR code; an unencodable URL just prints nothing.
+func printQR(url string) {
+	if qr, err := qrcode.GenerateASCII(url); err == nil {
+		fmt.Println(qr)
 	}
 }
 
 // subscriptionURL renders the subscription URL with the node's stored transport.
-func (m *Menu) subscriptionURL(domain, subHash string) string {
+func (m *Menu) subscriptionURL(subHash string) string {
 	if settings := m.loaded(); settings != nil && settings.Transport != nil {
-		return settings.Transport.SubURL(domain, subHash)
+		return settings.Transport.SubURL(settings.Domain, subHash)
 	}
 	// No settings, no URL: a built-in default would be a link that dies the moment the real transport loads.
 	return ""

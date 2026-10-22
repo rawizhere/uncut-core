@@ -1,40 +1,40 @@
 package config
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"os"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/caarlos0/env/v11"
-	"github.com/joho/godotenv"
 	"github.com/rawizhere/uncut-core/internal/transport"
 )
 
 type AppConfig struct {
-	Domain string `env:"DOMAIN"`
-	Email  string `env:"EMAIL"`
-	// No envDefault on purpose: unset TAG renders no tag token on labels.
-	Tag      string `env:"TAG"`
-	Timezone string `env:"TZ" envDefault:"Europe/Moscow"`
-	Clients  string `env:"CLIENTS"`
-	LogLevel string `env:"LOG_LEVEL" envDefault:"info"`
+	Domain string
+	Email  string
+	// No default on purpose: unset TAG renders no tag token on labels.
+	Tag      string
+	Timezone string
+	Clients  string
+	LogLevel string
 }
 
 // Version is a fallback for plain go build; images inject the tag with -ldflags -X.
 var Version = "3.2.0"
 
-func LoadAppConfig() (*AppConfig, error) {
-	_ = godotenv.Load()
-	_ = godotenv.Load("deployments/.env")
-
-	cfg := &AppConfig{}
-	if err := env.Parse(cfg); err != nil {
-		return nil, fmt.Errorf("parse env: %w", err)
+// LoadAppConfig reads the process environment; compose's env_file supplies deployments/.env.
+func LoadAppConfig() *AppConfig {
+	return &AppConfig{
+		Domain:   os.Getenv("DOMAIN"),
+		Email:    os.Getenv("EMAIL"),
+		Tag:      os.Getenv("TAG"),
+		Timezone: cmp.Or(os.Getenv("TZ"), "Europe/Moscow"),
+		Clients:  os.Getenv("CLIENTS"),
+		LogLevel: cmp.Or(os.Getenv("LOG_LEVEL"), "info"),
 	}
-	return cfg, nil
 }
 
 func InitLogger(level string) {
@@ -59,6 +59,7 @@ const (
 	ProtoHysteria2        InboundProtocol = "hysteria2"
 )
 
+// DefaultProtocols is the one protocol list: every known protocol, on by default, in render order.
 var DefaultProtocols = []InboundProtocol{
 	ProtoXHTTPStealth,
 	ProtoVLESSWS,
@@ -68,44 +69,41 @@ var DefaultProtocols = []InboundProtocol{
 	ProtoHysteria2,
 }
 
-var ValidProtocols = []InboundProtocol{
-	ProtoXHTTPStealth,
-	ProtoVLESSWS,
-	ProtoVLESSHTTPUpgrade,
-	ProtoVLESSGRPC,
-	ProtoVLESSReality,
-	ProtoHysteria2,
+func isValidProtocol(p string) bool {
+	return slices.Contains(DefaultProtocols, InboundProtocol(p))
 }
 
-func IsValidProtocol(p string) bool {
-	for _, valid := range ValidProtocols {
-		if string(valid) == p {
-			return true
-		}
+// DefaultProtocolNames is DefaultProtocols in the stored string form.
+func DefaultProtocolNames() []string {
+	out := make([]string, len(DefaultProtocols))
+	for i, p := range DefaultProtocols {
+		out[i] = string(p)
 	}
-	return false
+	return out
 }
 
-func ResolveProtocols(raw []string) []string {
-	seen := make(map[string]bool, len(raw))
+// CleanProtocols trims, drops empties and duplicates, and rejects unknown names.
+func CleanProtocols(raw []string) ([]string, error) {
 	out := make([]string, 0, len(raw))
 	for _, p := range raw {
 		p = strings.TrimSpace(p)
-		// tuic rows predate the hysteria2 swap; map them so stored client lists keep working.
-		if p == "tuic" {
-			p = string(ProtoHysteria2)
-		}
-		if p == "" || seen[p] || !IsValidProtocol(p) {
+		if p == "" || slices.Contains(out, p) {
 			continue
 		}
-		seen[p] = true
+		if !isValidProtocol(p) {
+			return nil, fmt.Errorf("unknown protocol %q", p)
+		}
 		out = append(out, p)
 	}
-	if len(out) > 0 {
-		return out
-	}
-	for _, p := range DefaultProtocols {
-		out = append(out, string(p))
+	return out, nil
+}
+
+// ResolveProtocols is the server's active set: unknown names are skipped so a stored list never breaks rendering; empty means defaults.
+func ResolveProtocols(raw []string) []string {
+	known := slices.DeleteFunc(slices.Clone(raw), func(p string) bool { return !isValidProtocol(strings.TrimSpace(p)) })
+	out, _ := CleanProtocols(known)
+	if len(out) == 0 {
+		return DefaultProtocolNames()
 	}
 	return out
 }
@@ -142,10 +140,13 @@ type Settings struct {
 	SubsDir           string   `json:"subs_dir,omitempty"`
 	LogDir            string   `json:"log_dir,omitempty"`
 	MTProtoRawSecret  string   `json:"mtproto_raw_secret,omitempty"`
+	// WebProxySecret: the tproxy bridge's own 16 bytes, so a leaked webproxy link cannot open the FakeTLS branch.
+	WebProxySecret string `json:"webproxy_secret,omitempty"`
+	// Fingerprint is the uTLS fingerprint clients put in their ClientHello; a client-side parameter, the server never sees it.
+	Fingerprint string `json:"fingerprint,omitempty"`
 	// MTProtoTLSDomain is the optional third-party domain for the FakeTLS branch. Empty means the branch is off.
-	MTProtoTLSDomain  string               `json:"mtproto_tls_domain,omitempty"`
-	TelegramProxyPort string               `json:"telegram_proxy_port,omitempty"`
-	Transport         *transport.Transport `json:"transport,omitempty"`
+	MTProtoTLSDomain string               `json:"mtproto_tls_domain,omitempty"`
+	Transport        *transport.Transport `json:"transport,omitempty"`
 }
 
 const (
@@ -156,18 +157,8 @@ const (
 	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.
 	Hysteria2HopPortsDefault = "20000:30000"
 	DefaultTelegramProxyPort = "8080"
-	DefaultSubsDir           = "/var/www/cdn/subs"
-	DefaultWebRoot           = "/var/www/html"
+	DefaultFingerprint       = "firefox"
 )
-
-// TelegramProxyPort: nginx and tproxy must read the same number or the bridge serves an empty page.
-func TelegramProxyPort() int {
-	port, err := strconv.Atoi(DefaultTelegramProxyPort)
-	if err != nil || port <= 0 {
-		return 8080
-	}
-	return port
-}
 
 var mskLocation = time.FixedZone("MSK", 3*60*60)
 

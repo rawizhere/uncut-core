@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +41,7 @@ func Doctor(ctx context.Context, store *db.Store, opts setup.Options) []Check {
 	}
 
 	checks := []Check{checkDNS(ctx, store, settings.Domain)}
-	checks = append(checks, checkPorts(settings)...)
+	checks = append(checks, checkPorts()...)
 	checks = append(checks, checkCertificate(settings, opts))
 	checks = append(checks, checkTransports(ctx, settings)...)
 	checks = append(checks, checkSubscriptions(store, opts))
@@ -68,7 +69,7 @@ func checkDNS(ctx context.Context, store *db.Store, domain string) Check {
 	return Check{Name: "dns", Pass: true, Detail: detail}
 }
 
-func checkPorts(settings config.Settings) []Check {
+func checkPorts() []Check {
 	var checks []Check
 	for _, p := range []struct {
 		name string
@@ -90,9 +91,6 @@ func checkPorts(settings config.Settings) []Check {
 		}
 		_ = conn.Close()
 		checks = append(checks, Check{Name: p.name, Pass: true, Detail: "accepting"})
-	}
-	if slicesContains(settings.Protocols, string(config.ProtoHysteria2)) && !udpListens(config.Hysteria2Port) {
-		checks = append(checks, Check{Name: "hysteria2 udp", Pass: false, Detail: "port " + config.Hysteria2Port + " not listening", Fix: "check sing-box logs"})
 	}
 	return checks
 }
@@ -125,7 +123,7 @@ func checkTransports(ctx context.Context, settings config.Settings) []Check {
 		_ = conn.Close()
 		checks = append(checks, Check{Name: "transport " + proto, Pass: true, Detail: "accepting on 127.0.0.1:" + strconv.Itoa(port)})
 	}
-	if slicesContains(settings.Protocols, string(config.ProtoHysteria2)) && !udpListens(config.Hysteria2Port) {
+	if slices.Contains(settings.Protocols, string(config.ProtoHysteria2)) && !udpListens(config.Hysteria2Port) {
 		checks = append(checks, Check{Name: "transport hysteria2", Pass: false, Detail: "udp " + config.Hysteria2Port + " not listening", Fix: "check sing-box logs"})
 	}
 	return checks
@@ -168,15 +166,6 @@ func udpListens(port string) bool {
 			continue
 		}
 		if addr := strings.Split(fields[1], ":"); len(addr) == 2 && addr[1] == hexPort {
-			return true
-		}
-	}
-	return false
-}
-
-func slicesContains(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
 			return true
 		}
 	}

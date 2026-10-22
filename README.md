@@ -111,8 +111,11 @@ be re-issued.
 
 The node runs a Telegram proxy and a tdesktop-web-proxy bridge behind it. The
 bridge page is served at `/?bridge=<capability>`, where the capability is
-HMAC-SHA256 over the domain keyed with the node's proxy raw secret — so the
-page is unreachable without the secret. `raw menu` prints the link.
+HMAC-SHA256 over the domain keyed with the node's `webproxy_secret` — so the
+page is unreachable without the secret, and nginx never logs that request. The
+optional FakeTLS branch (`raw set-mtproto-tls`) is sing-box's `mtproxy` inbound
+with its own `mtproto_raw_secret`, so the two links never share a key. `raw info`
+prints both links.
 
 ## Ops notes
 

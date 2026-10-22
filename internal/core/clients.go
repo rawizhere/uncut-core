@@ -36,42 +36,25 @@ func GenerateUUID() string {
 	return uuid.NewString()
 }
 
-func GeneratePassword() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
+// RandomHex returns n random bytes as hex: passwords, subscription tokens (16 bytes match transport.SubHashPattern), node secrets.
+func RandomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b) // crypto/rand.Read never fails; it crashes the process instead.
 	return hex.EncodeToString(b)
 }
 
-// GenerateSubToken makes the per-client subscription secret: random, so one rotation kills a leaked URL.
-func GenerateSubToken() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
-	}
-	return hex.EncodeToString(b)
-}
-
-// DefaultProtocols must mirror config.DefaultProtocols: lag makes subscriptions omit protocols.
-func DefaultProtocols() []string {
-	return []string{
-		string(config.ProtoXHTTPStealth),
-		string(config.ProtoVLESSWS),
-		string(config.ProtoVLESSHTTPUpgrade),
-		string(config.ProtoVLESSGRPC),
-		string(config.ProtoVLESSReality),
-		string(config.ProtoHysteria2),
-	}
-}
-
-func AddClientWithDefaultProtocols(store *db.Store, name string) (*config.Client, error) {
-	return AddClient(store, name, DefaultProtocols())
-}
-
+// AddClient creates a client: no protocols means a default snapshot that inherits the server's set; a list is an explicit allowlist.
 func AddClient(store *db.Store, name string, protocols []string) (*config.Client, error) {
 	if err := ValidateClientName(name); err != nil {
 		return nil, err
+	}
+	protos, err := config.CleanProtocols(protocols)
+	if err != nil {
+		return nil, err
+	}
+	explicit := len(protos) > 0
+	if !explicit {
+		protos = config.DefaultProtocolNames()
 	}
 
 	clients, err := store.GetClients()
@@ -86,22 +69,14 @@ func AddClient(store *db.Store, name string, protocols []string) (*config.Client
 	}
 
 	clientUUID := GenerateUUID()
-
-	sanitizedProtos := make([]string, 0, len(protocols))
-	for _, p := range protocols {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			sanitizedProtos = append(sanitizedProtos, p)
-		}
-	}
-
 	client := config.Client{
-		UUID:      clientUUID,
-		Name:      name,
-		Password:  GeneratePassword(),
-		SubHash:   GenerateSubToken(),
-		Protocols: sanitizedProtos,
-		CreatedAt: config.GetMSKTime(),
+		UUID:              clientUUID,
+		Name:              name,
+		Password:          RandomHex(16),
+		SubHash:           RandomHex(16),
+		ProtocolsExplicit: explicit,
+		Protocols:         protos,
+		CreatedAt:         config.GetMSKTime(),
 	}
 
 	if err := store.AddClient(client); err != nil {
@@ -120,7 +95,7 @@ func RotateClientSub(store *db.Store, subsDir, clientUUID string) (*config.Clien
 	}
 
 	old := client.SubHash
-	client.SubHash = GenerateSubToken()
+	client.SubHash = RandomHex(16)
 	if err := store.AddClient(*client); err != nil {
 		return nil, fmt.Errorf("rotate sub token: %w", err)
 	}
@@ -155,27 +130,24 @@ func DeleteClient(store *db.Store, subsDir, clientUUID string) error {
 	return nil
 }
 
+// UpdateClientProtocols makes the list the client's explicit allowlist.
 func UpdateClientProtocols(store *db.Store, clientUUID string, protocols []string) (*config.Client, error) {
+	protos, err := config.CleanProtocols(protocols)
+	if err != nil {
+		return nil, err
+	}
 	client, err := store.GetClientByUUID(clientUUID)
 	if err != nil {
 		return nil, fmt.Errorf("client not found: %w", err)
 	}
 
-	sanitizedProtos := make([]string, 0, len(protocols))
-	for _, p := range protocols {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			sanitizedProtos = append(sanitizedProtos, p)
-		}
-	}
-
-	client.Protocols = sanitizedProtos
+	client.Protocols = protos
 	client.ProtocolsExplicit = true
 	if err := store.AddClient(*client); err != nil {
 		return nil, fmt.Errorf("update client: %w", err)
 	}
 
-	slog.Info("Client protocols updated", "name", client.Name, "uuid", clientUUID, "protocols", sanitizedProtos)
+	slog.Info("Client protocols updated", "name", client.Name, "uuid", clientUUID, "protocols", protos)
 	return client, nil
 }
 

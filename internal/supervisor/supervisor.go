@@ -31,8 +31,6 @@ type ManagedProcess struct {
 	Spec    ProcessSpec
 	Cmd     *exec.Cmd
 	Running bool
-	// Stopped marks an operator-requested stop: the monitor reaps but does not restart, so a disabled process stays down.
-	Stopped bool
 	Started time.Time
 	Backoff time.Duration
 	// ProbeFails: consecutive failed liveness probes; at 3 the process is killed so the monitor restarts it.
@@ -118,7 +116,7 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 		_ = cmdLocal.Wait()
 		s.mu.Lock()
 		proc.Running = false
-		stopped := s.ctx.Err() != nil || proc.Stopped
+		stopped := s.ctx.Err() != nil
 		if time.Since(proc.Started) > 30*time.Second {
 			proc.Backoff = 0
 		}
@@ -163,39 +161,8 @@ func (s *Supervisor) ReloadSingBox() error {
 	return mp.Cmd.Process.Signal(syscall.SIGHUP)
 }
 
-// ReplaceSpec swaps the args of the named process in place (keeping its live state), or registers a new one; pair it with RestartProcess to apply.
-func (s *Supervisor) ReplaceSpec(name string, spec ProcessSpec) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if mp, ok := s.processes[name]; ok {
-		mp.Spec = spec
-		return
-	}
-	s.processes[spec.Name] = &ManagedProcess{Spec: spec}
-}
-
-// StopProcess stops the named process and keeps it down until StartProcess.
-func (s *Supervisor) StopProcess(name string) error {
-	s.mu.Lock()
-	mp, ok := s.processes[name]
-	if !ok {
-		s.mu.Unlock()
-		return fmt.Errorf("process %s not registered", name)
-	}
-	if mp.Running && mp.Cmd != nil && mp.Cmd.Process != nil {
-		mp.Stopped = true
-		slog.Info("Stopping process", "process", name, "pid", mp.Cmd.Process.Pid)
-		_ = mp.Cmd.Process.Signal(syscall.SIGTERM)
-	} else {
-		mp.Stopped = true
-	}
-	s.mu.Unlock()
-	return nil
-}
-
 func (s *Supervisor) RestartProcess(name string) error {
 	s.mu.Lock()
-	s.processes[name].Stopped = false
 	mp, ok := s.processes[name]
 	if !ok {
 		s.mu.Unlock()
