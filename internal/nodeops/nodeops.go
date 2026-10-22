@@ -90,20 +90,10 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, fmt.Errorf("ensure setup: %w", err)
 	}
 
-	chosen := protos
-	if len(chosen) == 0 {
-		chosen = core.DefaultProtocols()
-	}
-	client, err := core.AddClient(store, name, chosen)
+	// An operator-passed --protocols is an explicit allowlist; none is a default snapshot.
+	client, err := core.AddClient(store, name, protos)
 	if err != nil {
 		return nil, err
-	}
-	if len(protos) > 0 {
-		// An operator-passed --protocols at add time is an explicit allowlist, not a creation snapshot.
-		client.ProtocolsExplicit = true
-		if err := store.AddClient(*client); err != nil {
-			return nil, fmt.Errorf("update client: %w", err)
-		}
 	}
 
 	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
@@ -158,16 +148,9 @@ func findClient(store *db.Store, name string) (*config.Client, error) {
 
 // SetClientProtocols makes an explicit allowlist: off stays off for the client.
 func SetClientProtocols(ctx context.Context, store *db.Store, opts setup.Options, name string, protocols []string) (*ClientView, error) {
-	sanitized := make([]string, 0, len(protocols))
-	for _, p := range protocols {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if !config.IsValidProtocol(p) {
-			return nil, fmt.Errorf("unknown protocol %q", p)
-		}
-		sanitized = append(sanitized, p)
+	sanitized, err := config.CleanProtocols(protocols)
+	if err != nil {
+		return nil, err
 	}
 	if len(sanitized) == 0 {
 		return nil, errors.New("at least one protocol is required; --inherit goes back to the server set")
@@ -457,16 +440,9 @@ func RotatePaths(ctx context.Context, store *db.Store, opts setup.Options) (stri
 
 // SetProtocols replaces the server set; the explicit marker keeps the next daemon start from merging defaults back (which resurrected disabled ones).
 func SetProtocols(ctx context.Context, store *db.Store, opts setup.Options, protocols []string) ([]string, error) {
-	var resolved []string
-	for _, p := range protocols {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		if !config.IsValidProtocol(p) {
-			return nil, fmt.Errorf("unknown protocol %q", p)
-		}
-		resolved = append(resolved, p)
+	resolved, err := config.CleanProtocols(protocols)
+	if err != nil {
+		return nil, err
 	}
 	if len(resolved) == 0 {
 		return nil, errors.New("at least one protocol is required")
