@@ -24,7 +24,14 @@ import (
 var (
 	dataDir    string
 	installDir string
+
+	// store and opts are opened once by the root pre-run for every command that needs them.
+	store *db.Store
+	opts  setup.Options
 )
+
+// noStore marks commands that never touch the database, so they work before the node is installed.
+const noStore = "no-store"
 
 func main() {
 	appCfg, err := config.LoadAppConfig()
@@ -37,6 +44,16 @@ func main() {
 	rootCmd := &cobra.Command{
 		Use:   "raw",
 		Short: "Uncut Core Next-Generation Stealth VPN & Telegram Proxy Manager",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if skipsStore(cmd) {
+				return nil
+			}
+			_ = os.MkdirAll(dataDir, 0755)
+			var err error
+			store, err = db.New(filepath.Join(dataDir, "uncut.db"))
+			opts = setup.DefaultOptions(dataDir, installDir)
+			return err
+		},
 	}
 
 	rootCmd.PersistentFlags().StringVar(&dataDir, "data-dir", "/opt/uncut/data", "Path to data directory")
@@ -68,31 +85,36 @@ func main() {
 	rootCmd.AddCommand(setCertCmd())
 	rootCmd.AddCommand(hysteria2BandwidthCmd())
 
-	if err := rootCmd.Execute(); err != nil {
+	err = rootCmd.Execute()
+	// Closed here, not in a post-run: cobra skips post-runs when RunE fails.
+	if store != nil {
+		_ = store.Close()
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func initStore() (*db.Store, error) {
-	_ = os.MkdirAll(dataDir, 0755)
-	dbPath := filepath.Join(dataDir, "uncut.db")
-	return db.New(dbPath)
+// skipsStore reports commands that run without the database: noStore ones and cobra's own help and completion.
+func skipsStore(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		switch c.Name() {
+		case "help", "completion", cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd:
+			return true
+		}
+		if c.Annotations[noStore] != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func daemonCmd() *cobra.Command {
-	var ()
-
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Run Uncut Core Supervisor Daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
 			appCfg, err := config.LoadAppConfig()
 			if err != nil {
 				return fmt.Errorf("load app config: %w", err)
@@ -117,7 +139,6 @@ func daemonCmd() *cobra.Command {
 				}()
 			}
 
-			opts := setup.DefaultOptions(dataDir, installDir)
 			return nodeops.Daemon(ctx, store, appCfg, opts)
 		},
 	}
@@ -127,9 +148,10 @@ func daemonCmd() *cobra.Command {
 
 func singboxVersionCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "singbox-version <version>",
-		Short: "Install a Sing-box Extended release by version, without a GitHub API fetch",
-		Args:  cobra.ExactArgs(1),
+		Use:         "singbox-version <version>",
+		Short:       "Install a Sing-box Extended release by version, without a GitHub API fetch",
+		Args:        cobra.ExactArgs(1),
+		Annotations: map[string]string{noStore: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := strings.TrimPrefix(args[0], "v")
 			ctx := cmd.Context()
@@ -154,17 +176,10 @@ func menuCmd() *cobra.Command {
 }
 
 func openMenu(cmd *cobra.Command) error {
-	store, err := initStore()
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-
 	appCfg, _ := config.LoadAppConfig()
-	opts := setup.DefaultOptions(dataDir, installDir)
 	_, _ = setup.Ensure(cmd.Context(), store, appCfg, opts)
 
-	m := tui.NewMenu(store, nil, installDir)
+	m := tui.NewMenu(store, opts)
 	return m.Run(context.Background())
 }
 
@@ -185,13 +200,6 @@ func addClientCmd() *cobra.Command {
 				return fmt.Errorf("client name is required")
 			}
 
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			view, err := nodeops.AddClient(cmd.Context(), store, opts, name, protos)
 			if err != nil {
 				return err
@@ -216,13 +224,6 @@ func rotateSubCmd() *cobra.Command {
 		Short: "Regenerate a client's subscription token; the old subscription URL dies",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			view, err := nodeops.RotateSub(cmd.Context(), store, opts, args[0])
 			if err != nil {
 				return err
@@ -248,13 +249,6 @@ func delClientCmd() *cobra.Command {
 				return fmt.Errorf("client name or UUID is required")
 			}
 
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			if err := nodeops.DeleteClient(cmd.Context(), store, opts, name); err != nil {
 				return err
 			}
@@ -273,13 +267,6 @@ func listClientsCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all active clients",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			list, err := nodeops.ListClients(cmd.Context(), store, opts)
 			if err != nil {
 				return err
@@ -310,13 +297,6 @@ func syncIPCmd() *cobra.Command {
 		Use:   "sync-ip",
 		Short: "Sync public IPv4 address",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			newIP, err := nodeops.SyncIP(cmd.Context(), store, opts, forceIP)
 			if err != nil {
 				return err
@@ -335,13 +315,6 @@ func renewCertCmd() *cobra.Command {
 		Use:   "renew-cert",
 		Short: "Force renewal of SSL/TLS certificate",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			if err := nodeops.RenewCert(store, opts); err != nil {
 				return err
 			}
@@ -357,13 +330,6 @@ func changeDomainCmd() *cobra.Command {
 		Short: "Change server domain and regenerate certificates",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			if err := nodeops.ChangeDomain(cmd.Context(), store, opts, args[0]); err != nil {
 				return err
 			}
@@ -378,13 +344,6 @@ func doctorCmd() *cobra.Command {
 		Use:   "doctor",
 		Short: "Run local health checks: dns, ports, certificate, transports, subscriptions",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			checks := nodeops.Doctor(cmd.Context(), store, opts)
 
 			passed := 0
@@ -414,13 +373,6 @@ func infoCmd() *cobra.Command {
 		Use:   "info",
 		Short: "Print node state: region, transport revision, certificate expiry",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			info, err := nodeops.GetInfo(store, opts)
 			if err != nil {
 				return err
@@ -473,13 +425,6 @@ func setProtocolsCmd() *cobra.Command {
 				return fmt.Errorf("--protocols is required")
 			}
 
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			applied, err := nodeops.SetProtocols(cmd.Context(), store, opts, protos)
 			if err != nil {
 				return err
@@ -512,13 +457,6 @@ func hysteria2BandwidthCmd() *cobra.Command {
 				return fmt.Errorf("down: %w", err)
 			}
 
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			if err := nodeops.SetHysteria2Bandwidth(cmd.Context(), store, opts, up, down); err != nil {
 				return err
 			}
@@ -537,13 +475,6 @@ func rotatePathsCmd() *cobra.Command {
 		Use:   "rotate-paths",
 		Short: "Regenerate random transport paths; every issued client link dies",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			rev, err := nodeops.RotatePaths(cmd.Context(), store, opts)
 			if err != nil {
 				return err
@@ -577,14 +508,10 @@ func setClientProtocolsCmd() *cobra.Command {
 				return fmt.Errorf("either --protocols or --inherit is required, not both")
 			}
 
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
-			var view *nodeops.ClientView
+			var (
+				view *nodeops.ClientView
+				err  error
+			)
 			if inherit {
 				view, err = nodeops.InheritClientProtocols(cmd.Context(), store, opts, name)
 			} else {
@@ -617,13 +544,6 @@ func setMTProtoTLSCmd() *cobra.Command {
 		Use:   "set-mtproto-tls",
 		Short: "Enable MTProxy FakeTLS via a third-party domain; empty --domain disables",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			result, err := nodeops.SetMTProtoTLSDomain(cmd.Context(), store, opts, domain)
 			if err != nil {
 				return err
@@ -653,13 +573,6 @@ func setSNICmd() *cobra.Command {
 				return fmt.Errorf("reality SNI host is required")
 			}
 
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			rev, err := nodeops.SetRealitySNI(cmd.Context(), store, opts, host)
 			if err != nil {
 				return err
@@ -675,8 +588,9 @@ func setSNICmd() *cobra.Command {
 // versionCmd prints the compiled-in version, so a binary can be checked against its image tag in one line.
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Print the binary version",
+		Use:         "version",
+		Short:       "Print the binary version",
+		Annotations: map[string]string{noStore: "true"},
 		Run: func(cmd *cobra.Command, args []string) {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), config.Version)
 		},
@@ -704,13 +618,6 @@ func setCertCmd() *cobra.Command {
 				return fmt.Errorf("decode key: %w", err)
 			}
 
-			store, err := initStore()
-			if err != nil {
-				return err
-			}
-			defer func() { _ = store.Close() }()
-
-			opts := setup.DefaultOptions(dataDir, installDir)
 			domain, err := nodeops.SetCert(store, opts, certData, keyData)
 			if err != nil {
 				return err

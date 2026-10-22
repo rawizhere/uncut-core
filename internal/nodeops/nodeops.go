@@ -528,3 +528,49 @@ func SetCert(store *db.Store, opts setup.Options, certData, keyData []byte) (str
 	_ = exec.Command("pkill", "-HUP", "sing-box").Run()
 	return domain, nil
 }
+
+// Rebuild re-renders every config and reloads the services.
+func Rebuild(ctx context.Context, store *db.Store, opts setup.Options) error {
+	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+		return fmt.Errorf("rebuild configs: %w", err)
+	}
+	return nil
+}
+
+// SwitchSingbox installs a sing-box release and rebuilds, so the new binary takes over now rather than on the next reload.
+func SwitchSingbox(ctx context.Context, store *db.Store, opts setup.Options, version string) error {
+	if err := updater.InstallSingboxVersion(ctx, version, filepath.Join(opts.InstallDir, "bin", "sing-box")); err != nil {
+		return err
+	}
+	return Rebuild(ctx, store, opts)
+}
+
+// ExportBackup copies the database to backup_<timestamp>.db in the data directory and returns its path.
+func ExportBackup(opts setup.Options) (string, error) {
+	data, err := os.ReadFile(filepath.Join(opts.DataDir, "uncut.db"))
+	if err != nil {
+		return "", fmt.Errorf("read database: %w", err)
+	}
+	backupFile := filepath.Join(opts.DataDir, "backup_"+time.Now().Format("20060102_150405")+".db")
+	if err := os.WriteFile(backupFile, data, 0o600); err != nil {
+		return "", fmt.Errorf("write backup: %w", err)
+	}
+	return backupFile, nil
+}
+
+// Backups lists the backup files ExportBackup left in the data directory.
+func Backups(opts setup.Options) ([]string, error) {
+	return filepath.Glob(filepath.Join(opts.DataDir, "backup_*.db"))
+}
+
+// ImportBackup overwrites the database with a backup file and rebuilds from it.
+func ImportBackup(ctx context.Context, store *db.Store, opts setup.Options, file string) error {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("read backup: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(opts.DataDir, "uncut.db"), data, 0o600); err != nil {
+		return fmt.Errorf("restore database: %w", err)
+	}
+	return Rebuild(ctx, store, opts)
+}
