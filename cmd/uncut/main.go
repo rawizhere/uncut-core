@@ -101,6 +101,22 @@ func daemonCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
+			// As container PID 1 the daemon adopts orphaned children; without a reaper they pile up as zombies against the container pids limit.
+			if os.Getpid() == 1 {
+				sigChld := make(chan os.Signal, 16)
+				signal.Notify(sigChld, syscall.SIGCHLD)
+				go func() {
+					for range sigChld {
+						for {
+							var status syscall.WaitStatus
+							if pid, _ := syscall.Wait4(-1, &status, syscall.WNOHANG, nil); pid <= 0 {
+								break
+							}
+						}
+					}
+				}()
+			}
+
 			opts := setup.DefaultOptions(dataDir, installDir)
 			return nodeops.Daemon(ctx, store, appCfg, opts)
 		},
