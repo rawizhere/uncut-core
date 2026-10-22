@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -43,8 +44,8 @@ func GenerateVLESSRealityLink(client config.Client, s config.Settings) string {
 	sni := s.RealityServerName
 	// 8443 is the loopback reality inbound; 443 is shared with nginx by SNI split.
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=tcp&encryption=none&security=reality&pbk=%s&fp=chrome&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision#%s",
-		client.UUID, s.Domain, s.RealityPubKey, sni, s.RealityShortID, linkLabel(client.Name, "reality", s.Tag),
+		"vless://%s@%s:443?type=tcp&encryption=none&security=reality&pbk=%s&fp=%s&sni=%s&sid=%s&spx=%%2F&flow=xtls-rprx-vision#%s",
+		client.UUID, s.Domain, s.RealityPubKey, s.Fingerprint, sni, s.RealityShortID, linkLabel(client.Name, "reality", s.Tag),
 	)
 }
 
@@ -75,17 +76,30 @@ func GenerateVLESSWSLink(client config.Client, s config.Settings) string {
 	encodedPath := url.PathEscape(path)
 	// No ed: some converters drop early_data_header_name and build a dead ws outbound.
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=chrome#%s",
-		client.UUID, s.Domain, encodedPath, linkLabel(client.Name, "ws", s.Tag),
+		"vless://%s@%s:443?type=ws&security=tls&path=%s&encryption=none&fp=%s#%s",
+		client.UUID, s.Domain, encodedPath, s.Fingerprint, linkLabel(client.Name, "ws", s.Tag),
 	)
+}
+
+// xhttpExtra carries the client-side burst shaping: xmux keeps one long-lived
+// connection per host instead of a fan of fresh handshakes per request burst.
+func xhttpExtra() string {
+	extra, _ := json.Marshal(map[string]any{
+		"xmux": map[string]string{
+			"maxConcurrency":   "16-32",
+			"hMaxReusableSecs": "300",
+		},
+		"xPaddingBytes": "100-2500",
+	})
+	return base64.RawURLEncoding.EncodeToString(extra)
 }
 
 func GenerateXHTTPStealthLink(client config.Client, s config.Settings) string {
 	path := s.Transport.XHTTPPath()
 	encodedPath := url.PathEscape(path)
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=packet-up&host=%s&fp=chrome#%s",
-		client.UUID, s.Domain, encodedPath, s.Domain, linkLabel(client.Name, "xhttp", s.Tag),
+		"vless://%s@%s:443?type=xhttp&security=tls&path=%s&encryption=none&mode=packet-up&host=%s&fp=%s&extra=%s#%s",
+		client.UUID, s.Domain, encodedPath, s.Domain, s.Fingerprint, xhttpExtra(), linkLabel(client.Name, "xhttp", s.Tag),
 	)
 }
 
@@ -93,15 +107,15 @@ func GenerateVLESSHTTPUpgradeLink(client config.Client, s config.Settings) strin
 	path := s.Transport.UpgradePath()
 	encodedPath := url.PathEscape(path)
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=chrome#%s",
-		client.UUID, s.Domain, encodedPath, s.Domain, linkLabel(client.Name, "httpupgrade", s.Tag),
+		"vless://%s@%s:443?type=httpupgrade&security=tls&path=%s&encryption=none&host=%s&fp=%s#%s",
+		client.UUID, s.Domain, encodedPath, s.Domain, s.Fingerprint, linkLabel(client.Name, "httpupgrade", s.Tag),
 	)
 }
 
 func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
 	return fmt.Sprintf(
-		"vless://%s@%s:443?type=grpc&security=tls&serviceName=%s&encryption=none&host=%s&fp=chrome#%s",
-		client.UUID, s.Domain, s.Transport.GRPCService(), s.Domain, linkLabel(client.Name, "grpc", s.Tag),
+		"vless://%s@%s:443?type=grpc&security=tls&serviceName=%s&encryption=none&host=%s&fp=%s#%s",
+		client.UUID, s.Domain, s.Transport.GRPCService(), s.Domain, s.Fingerprint, linkLabel(client.Name, "grpc", s.Tag),
 	)
 }
 

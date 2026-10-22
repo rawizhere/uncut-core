@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -78,6 +79,7 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 	for key, fallback := range map[string]string{
 		"hysteria2_hop_ports": config.Hysteria2HopPortsDefault,
 		"protocols":           strings.Join(config.DefaultProtocolNames(), ","),
+		"fingerprint":         config.DefaultFingerprint,
 	} {
 		if _, err := setting(store, key, fallback); err != nil {
 			return config.Settings{}, err
@@ -140,6 +142,7 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		Hysteria2HopPorts: get(store, "hysteria2_hop_ports"),
 		Hysteria2UpMbps:   get(store, "hysteria2_up_mbps"),
 		Hysteria2DownMbps: get(store, "hysteria2_down_mbps"),
+		Fingerprint:       cmp.Or(get(store, "fingerprint"), config.DefaultFingerprint),
 		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
 		WebProxySecret:    get(store, "webproxy_secret"),
 		MTProtoTLSDomain:  get(store, "mtproto_tls_domain"),

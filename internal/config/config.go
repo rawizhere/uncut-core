@@ -142,6 +142,8 @@ type Settings struct {
 	MTProtoRawSecret  string   `json:"mtproto_raw_secret,omitempty"`
 	// WebProxySecret: the tproxy bridge's own 16 bytes, so a leaked webproxy link cannot open the FakeTLS branch.
 	WebProxySecret string `json:"webproxy_secret,omitempty"`
+	// Fingerprint is the uTLS fingerprint clients put in their ClientHello; a client-side parameter, the server never sees it.
+	Fingerprint string `json:"fingerprint,omitempty"`
 	// MTProtoTLSDomain is the optional third-party domain for the FakeTLS branch. Empty means the branch is off.
 	MTProtoTLSDomain string               `json:"mtproto_tls_domain,omitempty"`
 	Transport        *transport.Transport `json:"transport,omitempty"`
@@ -155,6 +157,7 @@ const (
 	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.
 	Hysteria2HopPortsDefault = "20000:30000"
 	DefaultTelegramProxyPort = "8080"
+	DefaultFingerprint       = "chrome"
 )
 
 var mskLocation = time.FixedZone("MSK", 3*60*60)
