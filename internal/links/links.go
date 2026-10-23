@@ -45,20 +45,12 @@ func TMeProxyURL(fqdn, secret string) string {
 	return fmt.Sprintf("https://t.me/proxy?server=%s&port=443&secret=%s", fqdn, secret)
 }
 
-// WebProxyMarkedSecret frames the raw MTProxy secret the tproxy deploy way: one 0x70 marker byte + the 16 raw bytes, base64url (their deploy rule).
-func WebProxyMarkedSecret(rawHex string) string {
-	decoded, err := hex.DecodeString(strings.TrimSpace(rawHex))
-	if err != nil || len(decoded) != 16 {
-		return ""
-	}
-	return base64.RawURLEncoding.EncodeToString(append([]byte{0x70}, decoded...))
-}
-
 // WebProxyURL is the tg://webproxy link for the tproxy bridge; the client derives the bridge capability locally from the secret.
+// Secret form: raw 16-byte hex. The Android WEB Proxy field rejects the 0x70-marked base64 form (it validates exactly 16 bytes); hex works everywhere.
 func WebProxyURL(domain, rawHex string) string {
-	marked := WebProxyMarkedSecret(rawHex)
-	if marked == "" {
+	secret := strings.ToLower(strings.TrimSpace(rawHex))
+	if _, err := hex.DecodeString(secret); err != nil || len(secret) != 32 {
 		return ""
 	}
-	return fmt.Sprintf("tg://webproxy?server=%s&port=443&secret=%s", domain, marked)
+	return fmt.Sprintf("tg://webproxy?server=%s&port=443&secret=%s", domain, secret)
 }
