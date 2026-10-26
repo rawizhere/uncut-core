@@ -169,11 +169,7 @@ func menuCmd() *cobra.Command {
 }
 
 func openMenu(cmd *cobra.Command) error {
-	appCfg := config.LoadAppConfig()
-	_, _ = setup.Ensure(cmd.Context(), store, appCfg, opts)
-
-	m := tui.NewMenu(store, opts)
-	return m.Run(context.Background())
+	return tui.NewMenu(store, opts).Run(cmd.Context())
 }
 
 func addClientCmd() *cobra.Command {
@@ -327,6 +323,7 @@ func changeDomainCmd() *cobra.Command {
 				return err
 			}
 			fmt.Printf("Domain successfully changed to %s and all subscriptions updated.\n", strings.TrimSpace(strings.ToLower(args[0])))
+			fmt.Println("DOMAIN in deployments/.env only seeds a fresh node; update it too so the file matches.")
 			return nil
 		},
 	}

@@ -46,7 +46,7 @@ func mtprotoSpec(settings *config.Settings, logsDir string) supervisor.ProcessSp
 // Daemon supervises sing-box, nginx, mtproto-proxy and tproxy-server, with ACME upkeep and a loopback probe endpoint.
 func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts setup.Options) error {
 
-	settings, err := setup.Ensure(ctx, store, appCfg, opts)
+	settings, err := setup.Bootstrap(ctx, store, appCfg, opts)
 	if err != nil {
 		return fmt.Errorf("ensure setup: %w", err)
 	}

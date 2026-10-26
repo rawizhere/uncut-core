@@ -84,10 +84,9 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, errors.New("client name is required")
 	}
 
-	appCfg := config.LoadAppConfig()
-	settings, err := setup.Ensure(ctx, store, appCfg, opts)
+	settings, err := setup.Load(store, opts)
 	if err != nil {
-		return nil, fmt.Errorf("ensure setup: %w", err)
+		return nil, err
 	}
 
 	// An operator-passed --protocols is an explicit allowlist; none is a default snapshot.
@@ -100,8 +99,7 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 
-	domain, _ := store.GetSetting("domain")
-	view := NewClientView(*client, domain, settings.Transport)
+	view := NewClientView(*client, settings.Domain, settings.Transport)
 	return &view, nil
 }
 
@@ -112,10 +110,9 @@ func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, err
 	}
 
-	appCfg := config.LoadAppConfig()
-	settings, err := setup.Ensure(ctx, store, appCfg, opts)
+	settings, err := setup.Load(store, opts)
 	if err != nil {
-		return nil, fmt.Errorf("ensure setup: %w", err)
+		return nil, err
 	}
 
 	client, err = core.RotateClientSub(store, opts.SubsDir, client.UUID)
@@ -127,8 +124,7 @@ func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 
-	domain, _ := store.GetSetting("domain")
-	view := NewClientView(*client, domain, settings.Transport)
+	view := NewClientView(*client, settings.Domain, settings.Transport)
 	return &view, nil
 }
 
@@ -292,20 +288,19 @@ func DeleteClient(ctx context.Context, store *db.Store, opts setup.Options, name
 
 // ListClients returns the node's clients plus the fqdn and raw secret link builders need.
 func ListClients(ctx context.Context, store *db.Store, opts setup.Options) (*ClientList, error) {
-	appCfg := config.LoadAppConfig()
-	settings, _ := setup.Ensure(ctx, store, appCfg, opts)
-
-	domain, _ := store.GetSetting("domain")
+	settings, err := setup.Load(store, opts)
+	if err != nil {
+		return nil, err
+	}
 	clients, err := store.GetClients()
 	if err != nil {
 		return nil, err
 	}
 
-	out := &ClientList{Domain: domain}
+	out := &ClientList{Domain: settings.Domain, MTProtoRawSecret: settings.MTProtoRawSecret}
 	for _, c := range clients {
-		out.Clients = append(out.Clients, NewClientView(c, domain, settings.Transport))
+		out.Clients = append(out.Clients, NewClientView(c, settings.Domain, settings.Transport))
 	}
-	out.MTProtoRawSecret, _ = store.GetSetting("mtproto_raw_secret")
 	return out, nil
 }
 
@@ -358,10 +353,9 @@ func ChangeDomain(ctx context.Context, store *db.Store, opts setup.Options, newD
 	if err := store.SetSetting("domain", newDomain); err != nil {
 		return fmt.Errorf("update domain setting: %w", err)
 	}
+	email, _ := store.GetSetting("email")
 
-	appCfg := config.LoadAppConfig()
-
-	mgr := acme.New(newDomain, appCfg.Email, opts.CertsDir(), opts.WebRoot)
+	mgr := acme.New(newDomain, email, opts.CertsDir(), opts.WebRoot)
 	if err := mgr.ForceRenew(); err != nil {
 		// Maintain retries in the background; a daemon restart re-runs issuance.
 		slog.Warn("TLS certificate request failed", "error", err)

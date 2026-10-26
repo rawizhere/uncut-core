@@ -46,15 +46,10 @@ func (o Options) CertsDir() string {
 	return filepath.Join(o.InstallDir, "certs", "certificates")
 }
 
-func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Options) (config.Settings, error) {
-	if cfg.Domain != "" {
-		currentDomain, _ := store.GetSetting("domain")
-		if currentDomain != cfg.Domain {
-			if err := store.SetSetting("domain", cfg.Domain); err != nil {
-				return config.Settings{}, fmt.Errorf("domain: %w", err)
-			}
-		}
-	} else if _, err := setting(store, "domain", config.DefaultDomain); err != nil {
+// Bootstrap prepares the node state once per daemon start: env seeds, keys, secrets, the public IP, protocol upgrades and the first clients. Every other command only Loads.
+func Bootstrap(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Options) (config.Settings, error) {
+	// DOMAIN seeds a fresh node only: after that the domain belongs to raw change-domain, and the env would silently revert it.
+	if _, err := setting(store, "domain", cmp.Or(cfg.Domain, config.DefaultDomain)); err != nil {
 		return config.Settings{}, fmt.Errorf("domain: %w", err)
 	}
 
@@ -62,7 +57,8 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		slog.Warn("Public IP detection failed", "error", err)
 	}
 
-	if err := ensureRealityKeys(store); err != nil {
+	fresh, err := ensureRealityKeys(store)
+	if err != nil {
 		return config.Settings{}, err
 	}
 
@@ -104,8 +100,8 @@ func Ensure(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts Op
 		}
 	}
 
-	clients, err := store.GetClients()
-	if err == nil && len(clients) == 0 {
+	// Seed clients on the first init only: a node whose operator deleted every client must not grow admin back on restart.
+	if fresh {
 		clientNames := cfg.Clients
 		if clientNames == "" {
 			clientNames = "admin"
@@ -256,14 +252,15 @@ func generatorOptions(settings config.Settings, opts Options) nginx.GeneratorOpt
 	}
 }
 
-func ensureRealityKeys(store *db.Store) error {
+// ensureRealityKeys generates the reality pair once; true means it just did, which marks the node's first init.
+func ensureRealityKeys(store *db.Store) (bool, error) {
 	if get(store, "reality_private_key") != "" && get(store, "reality_public_key") != "" {
-		return nil
+		return false, nil
 	}
 
 	privKey := make([]byte, 32)
 	if _, err := rand.Read(privKey); err != nil {
-		return fmt.Errorf("generate reality private key: %w", err)
+		return false, fmt.Errorf("generate reality private key: %w", err)
 	}
 
 	privKey[0] &= 248
@@ -272,21 +269,21 @@ func ensureRealityKeys(store *db.Store) error {
 
 	pubKey, err := curve25519.X25519(privKey, curve25519.Basepoint)
 	if err != nil {
-		return fmt.Errorf("calculate reality public key: %w", err)
+		return false, fmt.Errorf("calculate reality public key: %w", err)
 	}
 
 	privStr := base64.RawURLEncoding.EncodeToString(privKey)
 	pubStr := base64.RawURLEncoding.EncodeToString(pubKey)
 
 	if err := store.SetSetting("reality_private_key", privStr); err != nil {
-		return fmt.Errorf("save reality private key: %w", err)
+		return false, fmt.Errorf("save reality private key: %w", err)
 	}
 	if err := store.SetSetting("reality_public_key", pubStr); err != nil {
-		return fmt.Errorf("save reality public key: %w", err)
+		return false, fmt.Errorf("save reality public key: %w", err)
 	}
 
 	slog.Info("Generated Reality key pair")
-	return nil
+	return true, nil
 }
 
 func setting(store *db.Store, key, fallback string) (string, error) {
