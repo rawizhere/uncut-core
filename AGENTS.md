@@ -42,11 +42,13 @@ Then, in order:
     ufw status                                    # ssh, 80/tcp, 443/tcp, 443/udp, 20000:30000/udp
     fail2ban-client status                        # sshd + uncut-dos + uncut-honeypot
 
-`raw doctor` covers dns, ports, certificate, transports and subscriptions.
-It cannot see host-level ufw and fail2ban, hence the last two checks.
+`raw doctor` (`--json` for a machine-readable list) covers the daemon,
+config checks, dns (an AAAA record fails: the node is IPv4 only), ports,
+certificate, transports, the Telegram bridge and subscriptions. It cannot
+see host-level ufw and fail2ban, hence the last two checks.
 
     # 4. Clients and the report to the operator:
-    docker exec uncut-node raw add -n <name>
+    docker exec uncut-node raw add <name>
     docker exec uncut-node raw list --json        # subscription URLs
     docker exec uncut-node raw info               # doh, tg web proxy, mtproto
 
@@ -57,6 +59,10 @@ It cannot see host-level ufw and fail2ban, hence the last two checks.
   installed sing-box version survives.
 - Change node tag: edit `TAG=` in `deployments/.env`, recreate the container.
   Subscriptions regenerate on boot.
+- `DOMAIN=` in `.env` only seeds a fresh node; the domain changes through
+  `raw change-domain --yes`, then update `DOMAIN=` so the file matches.
+- Commands write the store and ask the daemon to reload; with the daemon
+  down they say so and the change applies on its next start.
 - Re-running install.sh rewrites `.env` from flags — never use it to update.
 - fail2ban runs on the host, not in the container.
 - Host layer (ufw, the 20000:30000/udp redirect onto 443 for Hysteria2 port
@@ -68,7 +74,8 @@ It cannot see host-level ufw and fail2ban, hence the last two checks.
 
 ## Breaking operations
 
-These kill issued client links. Only on explicit operator request:
+These kill issued client links and refuse to run without `--yes`. Only on
+explicit operator request:
 
 - `raw rotate-paths` — all transports, every link dies.
 - `raw change-domain` — new domain plus a fresh certificate.

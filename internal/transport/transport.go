@@ -10,13 +10,13 @@ import (
 	"strings"
 )
 
-// HashToken marks the per-client md5 inside the subscription path; generation data, never editable.
+// HashToken marks the per-client token inside the subscription path; generation data, never editable.
 const HashToken = "{hash}"
 
 // DefaultRealitySNI is the SNI a fresh transport hands the REALITY handshake.
 const DefaultRealitySNI = "dl.google.com"
 
-// SubHashPattern matches the subscription hash: md5, so 32 hex digits.
+// SubHashPattern matches the subscription token: 16 random bytes, so 32 hex digits.
 const SubHashPattern = "[a-f0-9]{32}"
 
 // unsafeCharsRe: the reality SNI travels verbatim into nginx and sing-box.
@@ -35,27 +35,15 @@ type Transport struct {
 }
 
 // Generate returns transport facts with freshly random paths, once per node.
-func Generate() (*Transport, error) {
-	t := &Transport{RealityServerName: DefaultRealitySNI}
-	var err error
-	if t.GRPC, err = randomSeg(); err != nil {
-		return nil, err
+func Generate() *Transport {
+	return &Transport{
+		RealityServerName: DefaultRealitySNI,
+		GRPC:              rand.Text(),
+		XHTTP:             "/" + rand.Text(),
+		WS:                "/" + rand.Text(),
+		Upgrade:           "/" + rand.Text(),
+		Sub:               "/" + rand.Text() + "/" + HashToken + ".bin",
 	}
-	if t.XHTTP, err = randomPath(); err != nil {
-		return nil, err
-	}
-	if t.WS, err = randomPath(); err != nil {
-		return nil, err
-	}
-	if t.Upgrade, err = randomPath(); err != nil {
-		return nil, err
-	}
-	var prefix string
-	if prefix, err = randomPath(); err != nil {
-		return nil, err
-	}
-	t.Sub = prefix + "/" + HashToken + ".bin"
-	return t, nil
 }
 
 func (t *Transport) XHTTPPath() string   { return t.XHTTP }
@@ -112,33 +100,4 @@ func safe(s string) string {
 			return -1
 		}
 	}, s)
-}
-
-// randomSeg: one opaque alnum segment, 62^16 (~95 bits) — the single primitive behind every transport fact: "/"+seg, gRPC bare seg, sub seg+"/"+hash+".bin".
-func randomSeg() (string, error) {
-	seg, err := randomAlnum(16)
-	if err != nil {
-		return "", err
-	}
-	return seg, nil
-}
-
-func randomPath() (string, error) {
-	seg, err := randomSeg()
-	if err != nil {
-		return "", err
-	}
-	return "/" + seg, nil
-}
-
-func randomAlnum(n int) (string, error) {
-	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	buf := make([]byte, n)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	for i, b := range buf {
-		buf[i] = alphabet[int(b)%len(alphabet)]
-	}
-	return string(buf), nil
 }

@@ -56,7 +56,7 @@ func mtproxyInbound(settings config.Settings) map[string]any {
 		"type":        "mtproxy",
 		"tag":         "mtproxy-faketls",
 		"listen":      "127.0.0.1",
-		"listen_port": 2399,
+		"listen_port": config.Ports.MTProtoTLS,
 		"users": []map[string]string{{
 			"name":   "default",
 			"secret": links.MTProtoFakeTLSSecret(settings.MTProtoRawSecret, settings.MTProtoTLSDomain),
@@ -80,7 +80,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"type":        "vless",
 			"tag":         "vless-ws",
 			"listen":      "127.0.0.1",
-			"listen_port": 10001,
+			"listen_port": config.Ports.WS,
 			"users":       users,
 			"transport": map[string]any{
 				"type":                   "ws",
@@ -96,7 +96,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"type":        "vless",
 			"tag":         "xhttp-stealth",
 			"listen":      "127.0.0.1",
-			"listen_port": 10002,
+			"listen_port": config.Ports.XHTTP,
 			"users":       users,
 			"transport": map[string]any{
 				"type": "xhttp",
@@ -116,7 +116,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"type":        "vless",
 			"tag":         "vless-httpupgrade",
 			"listen":      "127.0.0.1",
-			"listen_port": 10004,
+			"listen_port": config.Ports.Upgrade,
 			"users":       users,
 			"transport": map[string]any{
 				"type": "httpupgrade",
@@ -131,7 +131,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"type":        "vless",
 			"tag":         "vless-grpc",
 			"listen":      "127.0.0.1",
-			"listen_port": 10003,
+			"listen_port": config.Ports.GRPC,
 			"users":       users,
 			"transport": map[string]any{
 				"type":         "grpc",
@@ -156,7 +156,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 			"tag":  "vless-reality",
 			// Loopback only: the stream splitter in nginx is the only client.
 			"listen":      "127.0.0.1",
-			"listen_port": 8443,
+			"listen_port": config.Ports.Reality,
 			"users":       users,
 			"tls": map[string]any{
 				"enabled":     true,

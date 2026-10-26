@@ -69,7 +69,7 @@ func printLogFileTail(path, fallback, title string) {
 func (m *Menu) streamLiveLogs(ctx context.Context) {
 	fmt.Println("\nStreaming live logs... (Press Ctrl+C to return to menu)")
 
-	cmd := exec.CommandContext(ctx, "tail", "-f", "-n", "20", "/var/log/nginx/access.log")
+	cmd := exec.CommandContext(ctx, "tail", "-f", "-n", "20", filepath.Join(m.opts.LogDir, "access.log"))
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		fmt.Printf("Failed to open stream: %v\n\n", err)

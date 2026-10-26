@@ -59,6 +59,35 @@ const (
 	ProtoHysteria2        InboundProtocol = "hysteria2"
 )
 
+// Ports are the fixed loopback listeners behind the 443 split, named once for sing-box, nginx, the daemon and doctor.
+var Ports = LoopbackPorts{
+	WS: 10001, XHTTP: 10002, GRPC: 10003, Upgrade: 10004,
+	Reality: 8443, HTTPSBackend: 8442,
+	MTProtoBridge: 2398, MTProtoTLS: 2399,
+	DoH: 3053,
+}
+
+type LoopbackPorts struct {
+	WS, XHTTP, GRPC, Upgrade int
+	// Reality is the reality inbound; HTTPSBackend the nginx https server, both fed by the SNI split.
+	Reality, HTTPSBackend int
+	// MTProtoBridge is the plain mtproto-proxy only tproxy reaches; MTProtoTLS the sing-box FakeTLS inbound.
+	MTProtoBridge, MTProtoTLS int
+	DoH                       int
+}
+
+// ProtocolPort is the loopback TCP inbound of a protocol; false for hysteria2, which owns UDP 443.
+func ProtocolPort(p string) (int, bool) {
+	port, ok := map[InboundProtocol]int{
+		ProtoVLESSWS:          Ports.WS,
+		ProtoXHTTPStealth:     Ports.XHTTP,
+		ProtoVLESSGRPC:        Ports.GRPC,
+		ProtoVLESSHTTPUpgrade: Ports.Upgrade,
+		ProtoVLESSReality:     Ports.Reality,
+	}[InboundProtocol(p)]
+	return port, ok
+}
+
 // DefaultProtocols is the one protocol list: every known protocol, on by default, in render order.
 var DefaultProtocols = []InboundProtocol{
 	ProtoXHTTPStealth,
@@ -175,9 +204,3 @@ const (
 	DefaultTelegramProxyPort = "8080"
 	DefaultFingerprint       = "firefox"
 )
-
-var mskLocation = time.FixedZone("MSK", 3*60*60)
-
-func GetMSKTime() time.Time {
-	return time.Now().In(mskLocation)
-}

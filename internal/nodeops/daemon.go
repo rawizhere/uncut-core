@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,12 +24,12 @@ import (
 	"github.com/rawizhere/uncut-core/internal/updater"
 )
 
-// mtprotoSpec builds the plain mtproto-proxy behind tproxy; only the bridge reaches 2398, so it takes only the webproxy secret.
+// mtprotoSpec builds the plain mtproto-proxy behind tproxy; only the bridge reaches it, so it takes only the webproxy secret.
 func mtprotoSpec(settings *config.Settings, logsDir string) supervisor.ProcessSpec {
 	args := []string{
 		"-u", "nobody",
 		"-p", "8888",
-		"-H", "2398",
+		"-H", strconv.Itoa(config.Ports.MTProtoBridge),
 		"-S", settings.WebProxySecret,
 		"--aes-pwd", "/etc/mtproxy/proxy-secret",
 		"-M", "1",
@@ -55,7 +57,7 @@ func singboxSpec(settings *config.Settings, opts setup.Options, logsDir string) 
 	}
 	// Probe through the reality inbound: a hung sing-box still shows in the process table, only a TLS handshake tells a serving one.
 	if slices.Contains(settings.Protocols, string(config.ProtoVLESSReality)) {
-		spec.ProbeAddr = "127.0.0.1:8443"
+		spec.ProbeAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(config.Ports.Reality))
 		spec.ProbeSNI = settings.RealityServerName
 	}
 	return spec

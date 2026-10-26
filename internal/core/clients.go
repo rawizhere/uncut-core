@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -74,7 +75,7 @@ func AddClient(store *db.Store, name string, protocols []string) (*config.Client
 		SubHash:           RandomHex(16),
 		ProtocolsExplicit: explicit,
 		Protocols:         protos,
-		CreatedAt:         config.GetMSKTime(),
+		CreatedAt:         time.Now().UTC(),
 	}
 
 	if err := store.AddClient(client); err != nil {

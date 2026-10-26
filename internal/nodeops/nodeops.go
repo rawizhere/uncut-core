@@ -3,6 +3,7 @@ package nodeops
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -402,12 +403,14 @@ func GetInfo(store *db.Store, opts setup.Options) (*Info, error) {
 	}, nil
 }
 
-// RotatePaths regenerates the transport and rebuilds; every issued link dies.
+// RotatePaths regenerates the transport paths and rebuilds; every issued link dies. The reality SNI is an operator choice, not a path, so it carries over.
 func RotatePaths(ctx context.Context, store *db.Store, opts setup.Options) (string, error) {
-	t, err := transport.Generate()
+	settings, err := setup.Load(store, opts)
 	if err != nil {
-		return "", fmt.Errorf("generate transport: %w", err)
+		return "", err
 	}
+	t := transport.Generate()
+	t.RealityServerName = settings.RealityServerName
 	if err := setup.SaveTransport(store, t); err != nil {
 		return "", err
 	}
@@ -457,27 +460,31 @@ func SetHysteria2Bandwidth(ctx context.Context, store *db.Store, opts setup.Opti
 	return nil
 }
 
-// SetCert installs a custom certificate and reloads nginx + sing-box.
+// SetCert installs a custom certificate after checking the key matches it and it covers the node domain, then has the daemon reload nginx and sing-box.
 func SetCert(ctx context.Context, store *db.Store, opts setup.Options, certData, keyData []byte) (string, error) {
-	domain, err := store.GetSetting("domain")
-	if err != nil || domain == "" {
-		return "", fmt.Errorf("domain not found in settings: %w", err)
+	settings, err := setup.Load(store, opts)
+	if err != nil {
+		return "", err
+	}
+	pair, err := tls.X509KeyPair(certData, keyData)
+	if err != nil {
+		return "", fmt.Errorf("certificate and key do not form a pair: %w", err)
+	}
+	if err := pair.Leaf.VerifyHostname(settings.Domain); err != nil {
+		return "", fmt.Errorf("certificate does not cover %s: %w", settings.Domain, err)
 	}
 
 	certsDir := opts.CertsDir()
-	_ = os.MkdirAll(certsDir, 0o700)
-
-	certPath := filepath.Join(certsDir, domain+".crt")
-	keyPath := filepath.Join(certsDir, domain+".key")
-
-	if err := os.WriteFile(certPath, certData, 0o644); err != nil {
-		return "", fmt.Errorf("write cert: %w", err)
+	if err := os.MkdirAll(certsDir, 0o755); err != nil {
+		return "", err
 	}
-	if err := os.WriteFile(keyPath, keyData, 0o600); err != nil {
-		return "", fmt.Errorf("write key: %w", err)
+	if err := config.WriteFileAtomic(filepath.Join(certsDir, settings.Domain+".crt"), certData, 0o644); err != nil {
+		return "", err
 	}
-
-	return domain, setup.Reload(ctx)
+	if err := config.WriteFileAtomic(filepath.Join(certsDir, settings.Domain+".key"), keyData, 0o600); err != nil {
+		return "", err
+	}
+	return settings.Domain, setup.Reload(ctx)
 }
 
 // SwitchSingbox installs a sing-box release and has the daemon restart onto it now; a reload alone keeps the old binary running.

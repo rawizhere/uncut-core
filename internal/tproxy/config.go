@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -134,7 +135,7 @@ func ensureSiteIndex(publicDir string) error {
 const DefaultPublicDir = "/srv/tproxy-site"
 
 // DefaultBackend is the loopback mtproto-proxy only tproxy itself may reach.
-const DefaultBackend = "127.0.0.1:2398"
+var DefaultBackend = net.JoinHostPort("127.0.0.1", strconv.Itoa(config.Ports.MTProtoBridge))
 
 // Files renders the tproxy config and profiles by path; tproxy reads them only at startup, so the caller restarts it when they change.
 func Files(installDir, domain, secret, publicDir string) (map[string][]byte, error) {

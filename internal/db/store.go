@@ -150,7 +150,7 @@ func (s *Store) Restore(path string) error {
 		`DELETE FROM main.settings`,
 		`INSERT INTO main.settings (key, value) SELECT key, value FROM b.settings`,
 		`DELETE FROM main.clients`,
-		`INSERT INTO main.clients (` + clientColumns + `) SELECT ` + clientColumns + ` FROM b.clients`,
+		`INSERT INTO main.clients (` + clientColumns + `) SELECT ` + clientColumns + ` FROM b.clients ORDER BY rowid`,
 	} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
 			_ = tx.Rollback()
@@ -212,7 +212,7 @@ func scanClient(row interface{ Scan(...any) error }) (config.Client, error) {
 }
 
 func (s *Store) GetClients() ([]config.Client, error) {
-	rows, err := s.db.Query(`SELECT ` + clientColumns + ` FROM clients ORDER BY created_at ASC`)
+	rows, err := s.db.Query(`SELECT ` + clientColumns + ` FROM clients ORDER BY rowid ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func (s *Store) GetClientByUUID(uuid string) (*config.Client, error) {
 
 func (s *Store) AddClient(client config.Client) error {
 	if client.CreatedAt.IsZero() {
-		client.CreatedAt = config.GetMSKTime()
+		client.CreatedAt = time.Now().UTC()
 	}
 	if client.Protocols == nil {
 		client.Protocols = []string{}
@@ -284,5 +284,5 @@ func parseTime(val any) time.Time {
 			return t
 		}
 	}
-	return config.GetMSKTime()
+	return time.Time{}
 }

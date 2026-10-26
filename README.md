@@ -73,9 +73,9 @@ transport paths and proxy secrets, and seeds a client named `admin` (set
 
 Issuance runs in the daemon and renews 30 days before expiry. Let's Encrypt is
 the only CA; the challenge is HTTP-01, so port 80 must stay open. On a first
-boot the nginx render leaves the ssl server out until the first certificate
-lands (HTTP-01 needs nginx up; the ssl server needs the cert) — the TLS relay
-needs no certificate and works meanwhile. To bring your own certificate instead — a
+boot the nginx render leaves the ssl server out, and the sing-box render the
+UDP relay, until the first certificate lands (HTTP-01 needs nginx up; both
+need the cert) — the TLS relay needs no certificate and works meanwhile. To bring your own certificate instead — a
 wildcard, or a private CA — install it directly:
 
 ```bash
@@ -88,20 +88,28 @@ raw renew-cert        # force a renewal now
 
 ```bash
 raw menu              # interactive administration menu
-raw daemon            # the supervisor: sing-box, nginx, tproxy
-raw add -n phone      # add a client, prints its subscription URL and a QR
+raw daemon            # the supervisor: sing-box, nginx, tproxy; the only writer of configs
+raw add phone         # add a client, prints its subscription URL
 raw list              # clients with subscription URLs
-raw del -n phone      # remove a client and its subscription file
-raw rotate-sub phone  # new subscription token for one client; the old URL dies
+raw del phone --yes   # remove a client and its subscription file
+raw rotate-sub phone --yes  # new subscription token for one client; the old URL dies
 raw info              # version, tag, DoH endpoint, transport revision, cert expiry
-raw doctor            # health checks: dns, ports, cert, transports, subscriptions
-raw rotate-paths      # re-generate random paths; re-issue subscriptions
-raw change-domain node2.example.com   # new domain + a fresh certificate
-raw sync-ip [--force <ip>]            # pin the detected public IP
+raw doctor            # health checks: daemon, configs, dns, ports, cert, transports, tg bridge, subscriptions
+raw rotate-paths --yes      # re-generate random paths; re-issue subscriptions
+raw change-domain node2.example.com --yes   # new domain + a fresh certificate
+raw sync-ip [--force <ip>]                  # pin the detected public IP
 ```
 
-Every command takes `--data-dir` and `--install-dir`; `info`, `list` and
-`add` also take `--json`.
+Every command takes `--data-dir` and `--install-dir`; `info`, `list`, `add`
+and `doctor` also take `--json`. Commands that kill issued client links
+(`del`, `rotate-sub`, `rotate-paths`, `change-domain`, `set-sni`,
+`set-mtproto-tls`) refuse to run without `--yes`.
+
+Commands only change the SQLite store and ask the daemon (`POST
+127.0.0.1:8088/reload`) to re-render. The daemon checks each config with its
+consumer (`sing-box check`, `nginx -t`) before reloading and keeps the
+previous one when the check fails. `DOMAIN` in `.env` seeds a fresh node
+only; afterwards the domain changes through `raw change-domain`.
 
 `raw info` reports a **transport revision**: the fingerprint of the paths a
 client's links were built from. If it changes, every issued subscription has to
@@ -119,8 +127,8 @@ prints both links.
 
 ## Ops notes
 
-- The container healthcheck curls the loopback bridge and the daemon's own
-  `/healthz`; it does not touch the public 443 listener.
+- The container healthcheck curls the daemon's own `/healthz` (every managed
+  process up); it does not touch the public 443 listener.
 - `deployments/install.sh` is the one-command bootstrap the README deploy
   section pipes curl into.
 - `deployments/host.sh` sets up the host side (ufw, Hysteria2 port hopping,

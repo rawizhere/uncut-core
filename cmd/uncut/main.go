@@ -38,8 +38,11 @@ func main() {
 	config.InitLogger(appCfg.LogLevel)
 
 	rootCmd := &cobra.Command{
-		Use:   "raw",
-		Short: "Uncut Core Next-Generation Stealth VPN & Telegram Proxy Manager",
+		Use: "raw",
+		// main prints the error once; a usage dump after a runtime failure only buries it.
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Short:         "Uncut Core Next-Generation Stealth VPN & Telegram Proxy Manager",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if skipsStore(cmd) {
 				return nil
@@ -65,19 +68,19 @@ func main() {
 	rootCmd.AddCommand(daemonCmd())
 	rootCmd.AddCommand(menuCmd())
 	rootCmd.AddCommand(addClientCmd())
-	rootCmd.AddCommand(delClientCmd())
+	rootCmd.AddCommand(breaking(delClientCmd()))
 	rootCmd.AddCommand(listClientsCmd())
 	rootCmd.AddCommand(syncIPCmd())
 	rootCmd.AddCommand(renewCertCmd())
-	rootCmd.AddCommand(changeDomainCmd())
+	rootCmd.AddCommand(breaking(changeDomainCmd()))
 	rootCmd.AddCommand(infoCmd())
 	rootCmd.AddCommand(doctorCmd())
-	rootCmd.AddCommand(rotatePathsCmd())
-	rootCmd.AddCommand(rotateSubCmd())
+	rootCmd.AddCommand(breaking(rotatePathsCmd()))
+	rootCmd.AddCommand(breaking(rotateSubCmd()))
 	rootCmd.AddCommand(setProtocolsCmd())
 	rootCmd.AddCommand(setClientProtocolsCmd())
-	rootCmd.AddCommand(setMTProtoTLSCmd())
-	rootCmd.AddCommand(setSNICmd())
+	rootCmd.AddCommand(breaking(setMTProtoTLSCmd()))
+	rootCmd.AddCommand(breaking(setSNICmd()))
 	rootCmd.AddCommand(setCertCmd())
 	rootCmd.AddCommand(hysteria2BandwidthCmd())
 
@@ -90,6 +93,38 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// breaking gates a command that kills issued client links behind --yes, so an agent or a script never runs one by accident.
+func breaking(c *cobra.Command) *cobra.Command {
+	var yes bool
+	c.Flags().BoolVar(&yes, "yes", false, "confirm: this kills issued client links")
+	run := c.RunE
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if !yes {
+			return fmt.Errorf("%s kills issued client links; rerun with --yes", cmd.Name())
+		}
+		return run(cmd, args)
+	}
+	return c
+}
+
+// nameFlag registers -n as a hidden alias of the positional client name, kept for older scripts.
+func nameFlag(cmd *cobra.Command) {
+	cmd.Flags().StringP("name", "n", "", "client name")
+	_ = cmd.Flags().MarkHidden("name")
+}
+
+// clientName reads the client name from the argument or its -n alias.
+func clientName(cmd *cobra.Command, args []string) (string, error) {
+	name, _ := cmd.Flags().GetString("name")
+	if name == "" && len(args) > 0 {
+		name = args[0]
+	}
+	if name == "" {
+		return "", fmt.Errorf("client name is required")
+	}
+	return name, nil
 }
 
 // skipsStore reports commands that run without the database: noStore ones and cobra's own help and completion.
@@ -178,19 +213,17 @@ func openMenu(cmd *cobra.Command) error {
 
 func addClientCmd() *cobra.Command {
 	var (
-		name   string
 		asJSON bool
 		protos []string
 	)
 	cmd := &cobra.Command{
-		Use:   "add",
+		Use:   "add <name>",
 		Short: "Add a new client",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" && len(args) > 0 {
-				name = args[0]
-			}
-			if name == "" {
-				return fmt.Errorf("client name is required")
+			name, err := clientName(cmd, args)
+			if err != nil {
+				return err
 			}
 
 			view, err := nodeops.AddClient(cmd.Context(), store, opts, name, protos)
@@ -205,7 +238,7 @@ func addClientCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&name, "name", "n", "", "Client name")
+	nameFlag(cmd)
 	cmd.Flags().StringSliceVar(&protos, "protocols", nil, "Protocols to enable, defaults to the standard set")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
 	return cmd
@@ -215,9 +248,13 @@ func rotateSubCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rotate-sub <name>",
 		Short: "Regenerate a client's subscription token; the old subscription URL dies",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			view, err := nodeops.RotateSub(cmd.Context(), store, opts, args[0])
+			name, err := clientName(cmd, args)
+			if err != nil {
+				return err
+			}
+			view, err := nodeops.RotateSub(cmd.Context(), store, opts, name)
 			if err != nil {
 				return err
 			}
@@ -226,20 +263,19 @@ func rotateSubCmd() *cobra.Command {
 			return nil
 		},
 	}
+	nameFlag(cmd)
 	return cmd
 }
 
 func delClientCmd() *cobra.Command {
-	var name string
 	cmd := &cobra.Command{
-		Use:   "del",
+		Use:   "del <name|uuid>",
 		Short: "Delete a client by name or UUID",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" && len(args) > 0 {
-				name = args[0]
-			}
-			if name == "" {
-				return fmt.Errorf("client name or UUID is required")
+			name, err := clientName(cmd, args)
+			if err != nil {
+				return err
 			}
 
 			if err := nodeops.DeleteClient(cmd.Context(), store, opts, name); err != nil {
@@ -250,7 +286,7 @@ func delClientCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&name, "name", "n", "", "Client name or UUID")
+	nameFlag(cmd)
 	return cmd
 }
 
@@ -334,11 +370,27 @@ func changeDomainCmd() *cobra.Command {
 }
 
 func doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
-		Short: "Run local health checks: dns, ports, certificate, transports, subscriptions",
+		Short: "Run local health checks: daemon, configs, dns, ports, certificate, transports, tg bridge, subscriptions",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			checks := nodeops.Doctor(cmd.Context(), store, opts)
+			failed := 0
+			for _, c := range checks {
+				if !c.Pass {
+					failed++
+				}
+			}
+			if asJSON {
+				if err := json.NewEncoder(os.Stdout).Encode(checks); err != nil {
+					return err
+				}
+				if failed > 0 {
+					return fmt.Errorf("doctor: %d of %d checks failed", failed, len(checks))
+				}
+				return nil
+			}
 
 			passed := 0
 			for _, c := range checks {
@@ -353,12 +405,14 @@ func doctorCmd() *cobra.Command {
 				}
 			}
 			fmt.Printf("result: %d/%d PASS\n", passed, len(checks))
-			if passed < len(checks) {
-				return fmt.Errorf("doctor: %d of %d checks failed", len(checks)-passed, len(checks))
+			if failed > 0 {
+				return fmt.Errorf("doctor: %d of %d checks failed", failed, len(checks))
 			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	return cmd
 }
 
 func infoCmd() *cobra.Command {
@@ -483,29 +537,24 @@ func rotatePathsCmd() *cobra.Command {
 
 func setClientProtocolsCmd() *cobra.Command {
 	var (
-		name    string
 		protos  []string
 		inherit bool
 		asJSON  bool
 	)
 	cmd := &cobra.Command{
-		Use:   "set-client-protocols",
+		Use:   "set-client-protocols <name>",
 		Short: "Per-client protocol allowlist; --inherit goes back to the server set",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if name == "" && len(args) > 0 {
-				name = args[0]
-			}
-			if name == "" {
-				return fmt.Errorf("client name is required")
+			name, err := clientName(cmd, args)
+			if err != nil {
+				return err
 			}
 			if inherit == (len(protos) > 0) {
 				return fmt.Errorf("either --protocols or --inherit is required, not both")
 			}
 
-			var (
-				view *nodeops.ClientView
-				err  error
-			)
+			var view *nodeops.ClientView
 			if inherit {
 				view, err = nodeops.InheritClientProtocols(cmd.Context(), store, opts, name)
 			} else {
@@ -526,6 +575,7 @@ func setClientProtocolsCmd() *cobra.Command {
 			return nil
 		},
 	}
+	nameFlag(cmd)
 	cmd.Flags().StringSliceVar(&protos, "protocols", nil, "comma-separated protocol allowlist")
 	cmd.Flags().BoolVar(&inherit, "inherit", false, "reset to the server set")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")

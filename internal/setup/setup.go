@@ -171,10 +171,7 @@ func loadTransport(store *db.Store) (*transport.Transport, error) {
 		}
 		return &t, nil
 	}
-	t, err := transport.Generate()
-	if err != nil {
-		return nil, fmt.Errorf("generate transport: %w", err)
-	}
+	t := transport.Generate()
 	if err := SaveTransport(store, t); err != nil {
 		return nil, err
 	}
@@ -287,6 +284,14 @@ func writeChecked(files map[string][]byte, perm os.FileMode, check func() error)
 		return false, err
 	}
 	return true, nil
+}
+
+// CheckConfigs runs the consumers' own checks over the configs on disk.
+func CheckConfigs(ctx context.Context, opts Options) error {
+	if err := run(ctx, updater.SingBoxBin(opts.InstallDir), "check", "-c", filepath.Join(opts.InstallDir, "config.json")); err != nil {
+		return err
+	}
+	return run(ctx, "nginx", "-t")
 }
 
 // run executes a config check and folds its output into the error, which is where the check says what is wrong.

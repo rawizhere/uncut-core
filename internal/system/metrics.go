@@ -1,11 +1,8 @@
 package system
 
 import (
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,15 +18,6 @@ type HostMetrics struct {
 	DiskTotalGB     float64
 	DiskPercent     float64
 	UptimeFormatted string
-}
-
-type SSLMetrics struct {
-	Issuer        string
-	Subject       string
-	NotBefore     time.Time
-	NotAfter      time.Time
-	DaysRemaining int
-	IsValid       bool
 }
 
 func GetHostMetrics(dataDir string) HostMetrics {
@@ -155,42 +143,4 @@ func getCPUPercent() float64 {
 	idleDelta := float64(idle2 - idle1)
 	totalDelta := float64(total2 - total1)
 	return (1.0 - (idleDelta / totalDelta)) * 100.0
-}
-
-func GetSSLMetrics(certsDir, domain string) (*SSLMetrics, error) {
-	certPath := filepath.Join(certsDir, domain+".crt")
-	data, err := os.ReadFile(certPath)
-	if err != nil {
-		return nil, fmt.Errorf("certificate file not found: %w", err)
-	}
-
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, fmt.Errorf("invalid PEM certificate")
-	}
-
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse certificate: %w", err)
-	}
-
-	now := time.Now()
-	days := int(time.Until(cert.NotAfter).Hours() / 24)
-
-	issuerName := cert.Issuer.CommonName
-	if issuerName == "" && len(cert.Issuer.Organization) > 0 {
-		issuerName = cert.Issuer.Organization[0]
-	}
-	if issuerName == "" {
-		issuerName = cert.Issuer.String()
-	}
-
-	return &SSLMetrics{
-		Issuer:        issuerName,
-		Subject:       cert.Subject.CommonName,
-		NotBefore:     cert.NotBefore,
-		NotAfter:      cert.NotAfter,
-		DaysRemaining: days,
-		IsValid:       now.After(cert.NotBefore) && now.Before(cert.NotAfter),
-	}, nil
 }

@@ -18,12 +18,6 @@ const (
 	// StreamConfDir sits at nginx MAIN context; conf.d is http-only.
 	StreamConfDir  = "/etc/nginx/stream-conf.d"
 	StreamFileName = "uncut-stream.conf"
-
-	// RealityInboundPort and NginxHTTPSBackendPort: the loopback pair behind the SNI split.
-	RealityInboundPort    = 8443
-	NginxHTTPSBackendPort = 8442
-	// MTProtoTLSInboundPort: sing-box mtproxy inbound (FakeTLS); 2398 stays plain for tproxy.
-	MTProtoTLSInboundPort = 2399
 )
 
 type GeneratorOptions struct {
@@ -76,12 +70,12 @@ func GenerateStreamConfig(opts GeneratorOptions) (string, error) {
 
 	var mapBody strings.Builder
 	if sni != "" {
-		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", sni, RealityInboundPort)
+		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", sni, config.Ports.Reality)
 	}
 	if tlsDomain != "" {
-		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", tlsDomain, MTProtoTLSInboundPort)
+		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", tlsDomain, config.Ports.MTProtoTLS)
 	}
-	fmt.Fprintf(&mapBody, "        default 127.0.0.1:%d;\n", NginxHTTPSBackendPort)
+	fmt.Fprintf(&mapBody, "        default 127.0.0.1:%d;\n", config.Ports.HTTPSBackend)
 
 	body := `# SNI splitter: TCP 443 is fanned out by TLS server name. Reality (sing-box), the optional MTProxy FakeTLS branch and the https server share one public port; UDP 443 stays with Hysteria2 - the stream module is TCP only.
 stream {
@@ -133,6 +127,7 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 		UpgradePath:  opts.Transport.UpgradePath(),
 		GRPCService:  opts.Transport.GRPCService(),
 		TelegramPort: config.DefaultTelegramProxyPort,
+		Ports:        config.Ports,
 	}); err != nil {
 		panic(fmt.Errorf("render server template: %w", err))
 	}
@@ -142,7 +137,7 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 // serverTemplate renders the whole server config: the 80/8442 head always; the 443 server, with a location per active protocol, only once the certificate files exist.
 // The xhttp upstream (packet-up + keepalive: no fresh TCP dial per POST) must live at http level.
 var serverTemplate = template.Must(template.New("uncut").Parse(`{{if .XHTTP}}upstream xhttp_backend {
-    server 127.0.0.1:10002;
+    server 127.0.0.1:{{.Ports.XHTTP}};
     keepalive 64;
 }
 
@@ -179,7 +174,7 @@ server {
 }
 
 server {
-    listen 127.0.0.1:8442 ssl default_server;
+    listen 127.0.0.1:{{.Ports.HTTPSBackend}} ssl default_server;
     server_name _;
     server_tokens off;
     ssl_reject_handshake on;
@@ -189,7 +184,7 @@ server {
 
 {{if .Cert}}server {
     # TCP 443 is owned by the stream splitter; nginx sits on loopback, no QUIC (UDP 443 belongs to Hysteria2).
-    listen 127.0.0.1:8442 ssl;
+    listen 127.0.0.1:{{.Ports.HTTPSBackend}} ssl;
     http2 on;
     server_name {{.Domain}};
     server_tokens off;
@@ -208,11 +203,7 @@ server {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1h;
     ssl_session_tickets on;
-    ssl_stapling on;
-    ssl_stapling_verify on;
-    # OCSP stapling needs a resolver to fetch issuer status; without it nginx logs warnings and serves no stapled response.
-    resolver 1.1.1.1 8.8.8.8 valid=300s;
-    resolver_timeout 5s;
+    # No OCSP stapling: Let's Encrypt shut its OCSP responders down in 2025.
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -238,7 +229,7 @@ server {
 
     location = {{.DoHPath}} {
         limit_req zone={{.SubsZone}} burst=20 nodelay;
-        proxy_pass http://127.0.0.1:3053/dns-query;
+        proxy_pass http://127.0.0.1:{{.Ports.DoH}}/dns-query;
         proxy_buffering off;
     }
 
@@ -262,7 +253,7 @@ server {
     }
 
 {{end}}{{if .WS}}    location = {{.WSPath}} {
-        proxy_pass http://127.0.0.1:10001;
+        proxy_pass http://127.0.0.1:{{.Ports.WS}};
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_request_buffering off;
@@ -277,7 +268,7 @@ server {
     }
 
 {{end}}{{if .Upgrade}}    location = {{.UpgradePath}} {
-        proxy_pass http://127.0.0.1:10004;
+        proxy_pass http://127.0.0.1:{{.Ports.Upgrade}};
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_request_buffering off;
@@ -292,7 +283,7 @@ server {
     }
 
 {{end}}{{if .GRPC}}    location /{{.GRPCService}}/ {
-        grpc_pass grpc://127.0.0.1:10003;
+        grpc_pass grpc://127.0.0.1:{{.Ports.GRPC}};
         client_max_body_size 0;
         client_body_buffer_size 512k;
         grpc_buffer_size 512k;
@@ -359,4 +350,5 @@ type serverData struct {
 	UpgradePath              string
 	GRPCService              string
 	TelegramPort             string
+	Ports                    config.LoopbackPorts
 }

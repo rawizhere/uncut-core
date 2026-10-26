@@ -10,7 +10,6 @@ import (
 	"github.com/rawizhere/uncut-core/internal/config"
 	"github.com/rawizhere/uncut-core/internal/core"
 	"github.com/rawizhere/uncut-core/internal/db"
-	"github.com/rawizhere/uncut-core/internal/links"
 	"github.com/rawizhere/uncut-core/internal/nodeops"
 	"github.com/rawizhere/uncut-core/internal/qrcode"
 	"github.com/rawizhere/uncut-core/internal/setup"
@@ -35,6 +34,14 @@ func (m *Menu) loaded() *config.Settings {
 		return nil
 	}
 	return &s
+}
+
+// current is loaded for screens that only display a value: a load failure shows blanks.
+func (m *Menu) current() config.Settings {
+	if s := m.loaded(); s != nil {
+		return *s
+	}
+	return config.Settings{}
 }
 
 func (m *Menu) Run(ctx context.Context) error {
@@ -104,39 +111,32 @@ func (m *Menu) Run(ctx context.Context) error {
 	}
 }
 
+// showStatus is the human view of the same nodeops.GetInfo that `raw info` prints, plus host metrics.
 func (m *Menu) showStatus() {
-	domain, _ := m.store.GetSetting("domain")
-	ip, _ := m.store.GetSetting("server_ip")
-	clients, _ := m.store.GetClients()
-	activeProtos, _ := m.store.GetSetting("protocols")
-
-	host := system.GetHostMetrics(m.opts.DataDir)
-	ssl, _ := system.GetSSLMetrics(m.opts.CertsDir(), domain)
-	doh := ""
-	if settings := m.loaded(); settings != nil && settings.Transport != nil {
-		doh = "https://" + domain + settings.Transport.DoHPath()
+	info, err := nodeops.GetInfo(m.store, m.opts)
+	if err != nil {
+		fmt.Printf("\nFailed to load node state: %v\n", err)
+		return
 	}
+	host := system.GetHostMetrics(m.opts.DataDir)
 
 	fmt.Println("\n==================================")
-	fmt.Printf("Server Hostname: %s\n", domain)
-	fmt.Printf("Public IPv4:     %s\n", ip)
-	fmt.Printf("Active Clients:  %d\n", len(clients))
-	fmt.Printf("Active Inbounds: %s\n", activeProtos)
+	fmt.Printf("Server Hostname: %s\n", info.Domain)
+	fmt.Printf("Public IPv4:     %s\n", m.current().IP)
+	fmt.Printf("Active Clients:  %d\n", info.Clients)
+	fmt.Printf("Active Inbounds: %s\n", strings.Join(info.Protocols, ", "))
 	fmt.Println("----------------------------------")
 	fmt.Printf("CPU Utilization: %.1f%%\n", host.CPUUsagePercent)
 	fmt.Printf("Memory Usage:    %d MB / %d MB (%.1f%%)\n", host.MemoryUsedMB, host.MemoryTotalMB, host.MemoryPercent)
 	fmt.Printf("Disk Usage:      %.1f GB / %.1f GB (%.1f%%)\n", host.DiskUsedGB, host.DiskTotalGB, host.DiskPercent)
 	fmt.Printf("System Uptime:   %s\n", host.UptimeFormatted)
 	fmt.Println("----------------------------------")
-	if v := updater.CurrentVersion(m.opts.InstallDir); v != "" {
-		fmt.Printf("Sing-box:        %s\n", v)
+	if info.SingBoxVersion != "" {
+		fmt.Printf("Sing-box:        %s\n", info.SingBoxVersion)
 	}
-	if doh != "" {
-		fmt.Printf("DoH Endpoint:    %s\n", doh)
-	}
-	if ssl != nil {
-		fmt.Printf("SSL CA Issuer:   %s\n", ssl.Issuer)
-		fmt.Printf("SSL Expiry Date: %s (%d days remaining)\n", ssl.NotAfter.Format("2006-01-02 15:04:05 UTC"), ssl.DaysRemaining)
+	fmt.Printf("DoH Endpoint:    %s\n", info.DohURL)
+	if info.CertExpires != "" {
+		fmt.Printf("SSL Expiry Date: %s\n", info.CertExpires)
 	} else {
 		fmt.Println("SSL Status:      Pending / Not Found")
 	}
@@ -315,14 +315,9 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 }
 
 func (m *Menu) manageProtocols(ctx context.Context) {
-	activeStr, _ := m.store.GetSetting("protocols")
-	activeList := strings.Split(activeStr, ",")
 	activeMap := make(map[string]bool)
-	for _, p := range activeList {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			activeMap[p] = true
-		}
+	for _, p := range m.current().Protocols {
+		activeMap[p] = true
 	}
 
 	selected := make([]string, 0)
@@ -379,7 +374,7 @@ func (m *Menu) manageProtocols(ctx context.Context) {
 }
 
 func (m *Menu) changeDomain(ctx context.Context) {
-	currentDomain, _ := m.store.GetSetting("domain")
+	currentDomain := m.current().Domain
 
 	var newDomain string
 	input := huh.NewInput().
@@ -476,21 +471,22 @@ func (m *Menu) runSpeedtest(ctx context.Context) {
 }
 
 func (m *Menu) showTGSecret() {
-	domain, _ := m.store.GetSetting("domain")
-	raw, _ := m.store.GetSetting("mtproto_raw_secret")
-	webSecret, _ := m.store.GetSetting("webproxy_secret")
-	tlsDomain, _ := m.store.GetSetting("mtproto_tls_domain")
+	info, err := nodeops.GetInfo(m.store, m.opts)
+	if err != nil {
+		fmt.Printf("\nFailed to load node state: %v\n", err)
+		return
+	}
 
 	fmt.Println("\n=== Telegram Web Proxy ===")
-	fmt.Printf("Host:       %s\n", domain)
+	fmt.Printf("Host:       %s\n", info.Domain)
 	fmt.Printf("Port:       443\n")
-	if webSecret != "" {
-		fmt.Printf("Bridge URL: %s\n", links.BridgeURL(domain, webSecret))
+	if info.WebProxyURL != "" {
+		fmt.Printf("Web proxy:  %s\n", info.WebProxyURL)
+		fmt.Printf("Bridge URL: %s\n", info.BridgeURL)
 	}
-	// The FakeTLS link exists only when the branch is on; the old print was dead on arrival.
-	if raw != "" && tlsDomain != "" {
-		secret := links.MTProtoFakeTLSSecret(raw, tlsDomain)
-		fmt.Printf("MTProto:    %s\n", links.MTProtoURL(domain, secret))
+	if info.MTProtoURL != "" {
+		fmt.Printf("MTProto:    %s\n", info.MTProtoURL)
+		printQR(info.MTProtoURL)
 	} else {
 		fmt.Println("MTProto:    FakeTLS off (item 9 or `raw set-mtproto-tls --domain <third-party>`)")
 	}
@@ -498,7 +494,7 @@ func (m *Menu) showTGSecret() {
 }
 
 func (m *Menu) changeMTProtoTLS(ctx context.Context) {
-	current, _ := m.store.GetSetting("mtproto_tls_domain")
+	current := m.current().MTProtoTLSDomain
 	var input string
 	form := huh.NewInput().
 		Title(fmt.Sprintf("Current MTProto FakeTLS domain: %s\nThird-party domain (empty disables):", current)).
@@ -514,7 +510,7 @@ func (m *Menu) changeMTProtoTLS(ctx context.Context) {
 	if result == "" {
 		fmt.Println("\nMTProto FakeTLS disabled.")
 	} else {
-		fmt.Printf("\nMTProto FakeTLS enabled: %s (sing-box mtproxy inbound on 2399)\n", result)
+		fmt.Printf("\nMTProto FakeTLS enabled: %s (sing-box mtproxy inbound)\n", result)
 	}
 }
 

@@ -66,7 +66,7 @@ func RunSpeedtest(ctx context.Context) (*SpeedtestResult, error) {
 	}
 	dlDuration := time.Since(startDL).Seconds()
 	if dlDuration > 0 {
-		res.DownloadMbps = (float64(readBytes*8) / (1024 * 1024)) / dlDuration
+		res.DownloadMbps = (float64(readBytes*8) / 1e6) / dlDuration
 	}
 
 	// Upload test
@@ -85,7 +85,7 @@ func RunSpeedtest(ctx context.Context) (*SpeedtestResult, error) {
 	_ = respUL.Body.Close()
 	ulDuration := time.Since(startUL).Seconds()
 	if ulDuration > 0 {
-		res.UploadMbps = (float64(ulBytes*8) / (1024 * 1024)) / ulDuration
+		res.UploadMbps = (float64(ulBytes*8) / 1e6) / ulDuration
 	}
 
 	return res, nil

@@ -112,4 +112,4 @@ echo "node is up."
 
 echo "next steps:"
 echo "  docker exec uncut-node raw info                 # revision, cert expiry, proxy links"
-echo "  docker exec uncut-node raw add -n <name>        # add a client, prints links and a QR"
+echo "  docker exec uncut-node raw add <name>           # add a client, prints its subscription URL"

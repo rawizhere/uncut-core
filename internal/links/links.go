@@ -35,11 +35,6 @@ func MTProtoFakeTLSSecret(raw, tlsDomain string) string {
 	return "ee" + raw + hex.EncodeToString([]byte(tlsDomain))
 }
 
-// MTProtoURL: native-client link; the stream splitter owns 443, so port = 443.
-func MTProtoURL(fqdn, secret string) string {
-	return fmt.Sprintf("tg://proxy?server=%s&port=443&secret=%s", fqdn, secret)
-}
-
 // TMeProxyURL is the t.me frontend form of the FakeTLS proxy link.
 func TMeProxyURL(fqdn, secret string) string {
 	return fmt.Sprintf("https://t.me/proxy?server=%s&port=443&secret=%s", fqdn, secret)

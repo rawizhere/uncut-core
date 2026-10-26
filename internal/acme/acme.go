@@ -96,7 +96,7 @@ func Maintain(ctx context.Context, current func() (*Manager, error), onRenew fun
 }
 
 func (m *Manager) valid() bool {
-	cert, err := m.parse()
+	cert, err := m.Certificate()
 	if err != nil {
 		return false
 	}
@@ -106,14 +106,15 @@ func (m *Manager) valid() bool {
 
 // Expires reports the certificate's expiry; the renewal window uses it.
 func (m *Manager) Expires() (time.Time, error) {
-	cert, err := m.parse()
+	cert, err := m.Certificate()
 	if err != nil {
 		return time.Time{}, err
 	}
 	return cert.NotAfter, nil
 }
 
-func (m *Manager) parse() (*x509.Certificate, error) {
+// Certificate parses the installed leaf certificate.
+func (m *Manager) Certificate() (*x509.Certificate, error) {
 	data, err := os.ReadFile(m.CertPath())
 	if err != nil {
 		return nil, err
