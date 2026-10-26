@@ -114,7 +114,7 @@ func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, err
 	}
 
-	client, err = core.RotateClientSub(store, opts.SubsDir, client.UUID)
+	client, err = core.RotateClientSub(store, client.UUID)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +270,7 @@ func DeleteClient(ctx context.Context, store *db.Store, opts setup.Options, name
 	if err != nil {
 		return err
 	}
-	if err := core.DeleteClient(store, opts.SubsDir, client.UUID); err != nil {
+	if err := core.DeleteClient(store, client.UUID); err != nil {
 		return err
 	}
 	return setup.Reload(ctx)
@@ -337,12 +337,15 @@ func ChangeDomain(ctx context.Context, store *db.Store, opts setup.Options, newD
 		return errors.New("domain cannot be empty")
 	}
 
+	settings, err := setup.Load(store, opts)
+	if err != nil {
+		return err
+	}
 	if err := store.SetSetting("domain", newDomain); err != nil {
 		return fmt.Errorf("update domain setting: %w", err)
 	}
-	email, _ := store.GetSetting("email")
 
-	mgr := acme.New(newDomain, email, opts.CertsDir(), opts.WebRoot)
+	mgr := acme.New(newDomain, settings.Email, opts.CertsDir(), opts.WebRoot)
 	if err := mgr.ForceRenew(); err != nil {
 		// Maintain retries in the background; a daemon restart re-runs issuance.
 		slog.Warn("TLS certificate request failed", "error", err)
@@ -424,11 +427,8 @@ func SetProtocols(ctx context.Context, store *db.Store, opts setup.Options, prot
 		return nil, errors.New("at least one protocol is required")
 	}
 
-	if err := store.SetSetting("protocols", strings.Join(resolved, ",")); err != nil {
+	if err := store.SetSettings(map[string]string{"protocols": strings.Join(resolved, ","), "protocols_explicit": "true"}); err != nil {
 		return nil, fmt.Errorf("save protocols: %w", err)
-	}
-	if err := store.SetSetting("protocols_explicit", "true"); err != nil {
-		return nil, fmt.Errorf("mark protocols explicit: %w", err)
 	}
 	if err := setup.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("rebuild configs: %w", err)
@@ -438,17 +438,18 @@ func SetProtocols(ctx context.Context, store *db.Store, opts setup.Options, prot
 
 // SetHysteria2Bandwidth stores the brutal-CC caps; zero values clear them back to BBR.
 func SetHysteria2Bandwidth(ctx context.Context, store *db.Store, opts setup.Options, up, down int) error {
+	kv := map[string]string{}
 	for key, val := range map[string]int{"hysteria2_up_mbps": up, "hysteria2_down_mbps": down} {
 		if val < 0 {
 			return fmt.Errorf("bandwidth must be >= 0")
 		}
-		stored := ""
+		kv[key] = ""
 		if val > 0 {
-			stored = strconv.Itoa(val)
+			kv[key] = strconv.Itoa(val)
 		}
-		if err := store.SetSetting(key, stored); err != nil {
-			return fmt.Errorf("save %s: %w", key, err)
-		}
+	}
+	if err := store.SetSettings(kv); err != nil {
+		return fmt.Errorf("save bandwidth: %w", err)
 	}
 	if err := setup.Reload(ctx); err != nil {
 		return fmt.Errorf("rebuild configs: %w", err)

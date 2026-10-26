@@ -108,6 +108,22 @@ func ResolveProtocols(raw []string) []string {
 	return out
 }
 
+// EffectiveProtocols is the one rule for what a client gets: an explicit list is an allowlist (off stays off), anything else is its creation snapshot plus the server set; both cut to the server's active set. Client order first, then the server's, so subscriptions stay byte-stable.
+func EffectiveProtocols(c Client, serverRaw []string) []string {
+	server := ResolveProtocols(serverRaw)
+	protos := c.Protocols
+	if !c.ProtocolsExplicit || len(protos) == 0 {
+		protos = append(slices.Clone(protos), server...)
+	}
+	out := make([]string, 0, len(server))
+	for _, p := range protos {
+		if slices.Contains(server, p) && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 type Client struct {
 	UUID     string `json:"uuid"`
 	Name     string `json:"name"`

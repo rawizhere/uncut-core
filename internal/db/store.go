@@ -44,6 +44,8 @@ DELETE FROM settings WHERE key = 'country';
 `,
 	// v3 persists the per-client allowlist marker; before it every reload reverted to inherit.
 	`ALTER TABLE clients ADD COLUMN protocols_explicit INTEGER NOT NULL DEFAULT 0`,
+	// v4 backfills the subscription token of pre-token rows, which the render path used to write on the fly.
+	`UPDATE clients SET sub_hash = lower(hex(randomblob(16))) WHERE sub_hash IS NULL OR sub_hash = ''`,
 }
 
 // New opens the node database: WAL, 5s busy timeout, one pinned connection, 0600, migrated.
@@ -167,11 +169,27 @@ func (s *Store) GetSetting(key string) (string, error) {
 	return val, nil
 }
 
+const upsertSetting = `INSERT INTO settings (key, value) VALUES (?, ?)
+	ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+
 func (s *Store) SetSetting(key, value string) error {
-	query := `INSERT INTO settings (key, value) VALUES (?, ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-	_, err := s.db.Exec(query, key, value)
+	_, err := s.db.Exec(upsertSetting, key, value)
 	return err
+}
+
+// SetSettings writes several keys in one transaction: a multi-key change lands whole or not at all.
+func (s *Store) SetSettings(kv map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for k, v := range kv {
+		if _, err := tx.Exec(upsertSetting, k, v); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set %s: %w", k, err)
+		}
+	}
+	return tx.Commit()
 }
 
 const clientColumns = `uuid, name, password, sub_hash, protocols, protocols_explicit, created_at`

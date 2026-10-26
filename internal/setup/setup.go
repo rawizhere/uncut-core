@@ -360,11 +360,8 @@ func ensureRealityKeys(store *db.Store) (bool, error) {
 	privStr := base64.RawURLEncoding.EncodeToString(privKey)
 	pubStr := base64.RawURLEncoding.EncodeToString(pubKey)
 
-	if err := store.SetSetting("reality_private_key", privStr); err != nil {
-		return false, fmt.Errorf("save reality private key: %w", err)
-	}
-	if err := store.SetSetting("reality_public_key", pubStr); err != nil {
-		return false, fmt.Errorf("save reality public key: %w", err)
+	if err := store.SetSettings(map[string]string{"reality_private_key": privStr, "reality_public_key": pubStr}); err != nil {
+		return false, fmt.Errorf("save reality key pair: %w", err)
 	}
 
 	slog.Info("Generated Reality key pair")
@@ -392,7 +389,7 @@ func get(store *db.Store, key string) string {
 	return value
 }
 
-// mergeDefaultProtocols appends post-init default protocols to non-explicit lists; explicit lists stay alone (merging resurrected disabled protocols).
+// mergeDefaultProtocols appends post-init default protocols to a non-explicit server list; an explicit one stays alone (merging resurrected disabled protocols).
 func mergeDefaultProtocols(store *db.Store) error {
 	defaults := config.DefaultProtocolNames()
 
@@ -407,25 +404,7 @@ func mergeDefaultProtocols(store *db.Store) error {
 		}
 	}
 
-	clients, err := store.GetClients()
-	if err != nil {
-		return fmt.Errorf("fetch clients: %w", err)
-	}
-	for _, client := range clients {
-		if client.ProtocolsExplicit {
-			// An explicit allowlist is a choice: off stays off, like the server marker.
-			continue
-		}
-		clientMerged, clientAdded := mergeMissing(client.Protocols, defaults)
-		if clientAdded == 0 {
-			continue
-		}
-		client.Protocols = clientMerged
-		if err := store.AddClient(client); err != nil {
-			return fmt.Errorf("merge protocols for client %s: %w", client.Name, err)
-		}
-		slog.Info("Added protocols to client", "name", client.Name, "added", clientAdded)
-	}
+	// Client snapshots need no merge: EffectiveProtocols already adds the server set to every non-explicit client.
 	return nil
 }
 

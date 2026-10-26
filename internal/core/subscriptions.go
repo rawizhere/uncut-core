@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -120,18 +119,8 @@ func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
 }
 
 func GenerateClientLinks(client config.Client, s config.Settings) []string {
-	server := config.ResolveProtocols(s.Protocols)
-	protos := client.Protocols
-	if !client.ProtocolsExplicit || len(protos) == 0 {
-		// Non-explicit lists are creation snapshots: they merge in new server protocols. Explicit is an allowlist — off stays off.
-		protos = append(slices.Clone(protos), server...)
-	}
-
 	links := make([]string, 0)
-	for _, proto := range protos {
-		if !slices.Contains(server, proto) {
-			continue
-		}
+	for _, proto := range config.EffectiveProtocols(client, s.Protocols) {
 		var link string
 		switch config.InboundProtocol(proto) {
 		case config.ProtoVLESSReality:
@@ -147,10 +136,7 @@ func GenerateClientLinks(client config.Client, s config.Settings) []string {
 		case config.ProtoVLESSGRPC:
 			link = GenerateVLESSGRPCLink(client, s)
 		}
-		// One link per protocol: the merge above and old rows can repeat one.
-		if !slices.Contains(links, link) {
-			links = append(links, link)
-		}
+		links = append(links, link)
 	}
 	return links
 }
@@ -164,21 +150,7 @@ func GenerateSubscriptionPayload(client config.Client, s config.Settings) string
 	return base64.StdEncoding.EncodeToString([]byte(joined))
 }
 
-func WriteSubscriptionFile(subDir string, client config.Client, s config.Settings) error {
-	if err := os.MkdirAll(subDir, 0755); err != nil {
-		return fmt.Errorf("create subscription dir: %w", err)
-	}
-
-	payload := GenerateSubscriptionPayload(client, s)
-	filePath := filepath.Join(subDir, client.SubHash)
-
-	if err := os.WriteFile(filePath, []byte(payload), 0644); err != nil {
-		return fmt.Errorf("write subscription file: %w", err)
-	}
-
-	return nil
-}
-
+// RegenerateAllSubscriptions writes one file per client and removes every other file in subDir.
 func RegenerateAllSubscriptions(store *db.Store, subDir string, s config.Settings) error {
 	if err := os.MkdirAll(subDir, 0755); err != nil {
 		return fmt.Errorf("create subscription dir: %w", err)
@@ -189,16 +161,22 @@ func RegenerateAllSubscriptions(store *db.Store, subDir string, s config.Setting
 		return fmt.Errorf("fetch clients: %w", err)
 	}
 
+	keep := make(map[string]bool, len(clients))
 	for _, client := range clients {
-		if client.SubHash == "" {
-			client.SubHash = RandomHex(16)
-			if err := store.AddClient(client); err != nil {
-				return fmt.Errorf("persist sub token for %s: %w", client.Name, err)
-			}
+		// Atomic: nginx may serve the file mid-write.
+		if err := config.WriteFileAtomic(filepath.Join(subDir, client.SubHash), []byte(GenerateSubscriptionPayload(client, s)), 0o644); err != nil {
+			return fmt.Errorf("write subscription for %s: %w", client.Name, err)
 		}
-		if err := WriteSubscriptionFile(subDir, client, s); err != nil {
-			slog.Error("Failed to write subscription file", "name", client.Name, "err", err)
-			return err
+		keep[client.SubHash] = true
+	}
+	// Sweep files of deleted clients and rotated tokens: their URLs must die with the change.
+	entries, err := os.ReadDir(subDir)
+	if err != nil {
+		return fmt.Errorf("read subscription dir: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() && !keep[e.Name()] {
+			_ = os.Remove(filepath.Join(subDir, e.Name()))
 		}
 	}
 

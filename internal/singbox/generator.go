@@ -37,11 +37,11 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 	}, "", "  ")
 }
 
-// allowedUsers renders every client allowed on proto; an empty client list means all protocols.
-func allowedUsers(clients []config.Client, proto string, user func(config.Client) map[string]string) []map[string]string {
+// allowedUsers renders every client whose effective set holds proto — the same rule the subscription links follow.
+func allowedUsers(clients []config.Client, server []string, proto string, user func(config.Client) map[string]string) []map[string]string {
 	out := make([]map[string]string, 0)
 	for _, c := range clients {
-		if c.UUID != "" && (len(c.Protocols) == 0 || slices.Contains(c.Protocols, proto)) {
+		if c.UUID != "" && slices.Contains(config.EffectiveProtocols(c, server), proto) {
 			out = append(out, user(c))
 		}
 	}
@@ -75,7 +75,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 
 	switch proto {
 	case string(config.ProtoVLESSWS):
-		users := allowedUsers(clients, proto, vlessUser)
+		users := allowedUsers(clients, settings.Protocols, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "vless-ws",
@@ -91,7 +91,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoXHTTPStealth):
-		users := allowedUsers(clients, proto, vlessUser)
+		users := allowedUsers(clients, settings.Protocols, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "xhttp-stealth",
@@ -111,7 +111,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoVLESSHTTPUpgrade):
-		users := allowedUsers(clients, proto, vlessUser)
+		users := allowedUsers(clients, settings.Protocols, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "vless-httpupgrade",
@@ -126,7 +126,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoVLESSGRPC):
-		users := allowedUsers(clients, proto, vlessUser)
+		users := allowedUsers(clients, settings.Protocols, proto, vlessUser)
 		return map[string]any{
 			"type":        "vless",
 			"tag":         "vless-grpc",
@@ -140,7 +140,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoVLESSReality):
-		users := allowedUsers(clients, proto, func(c config.Client) map[string]string {
+		users := allowedUsers(clients, settings.Protocols, proto, func(c config.Client) map[string]string {
 			return map[string]string{"uuid": c.UUID, "flow": "xtls-rprx-vision"}
 		})
 		// Client SNI = handshake target: nginx hands over the hello (ssl_preread).
@@ -175,7 +175,7 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}, nil
 
 	case string(config.ProtoHysteria2):
-		users := allowedUsers(clients, proto, func(c config.Client) map[string]string {
+		users := allowedUsers(clients, settings.Protocols, proto, func(c config.Client) map[string]string {
 			return map[string]string{"password": cmp.Or(c.Password, c.UUID)}
 		})
 		domain := settings.Domain
