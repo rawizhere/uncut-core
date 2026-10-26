@@ -518,14 +518,10 @@ func SwitchSingbox(ctx context.Context, store *db.Store, opts setup.Options, ver
 	return Rebuild(ctx, store, opts)
 }
 
-// ExportBackup copies the database to backup_<timestamp>.db in the data directory and returns its path.
-func ExportBackup(opts setup.Options) (string, error) {
-	data, err := os.ReadFile(filepath.Join(opts.DataDir, "uncut.db"))
-	if err != nil {
-		return "", fmt.Errorf("read database: %w", err)
-	}
+// ExportBackup snapshots the database to backup_<timestamp>.db in the data directory and returns its path.
+func ExportBackup(store *db.Store, opts setup.Options) (string, error) {
 	backupFile := filepath.Join(opts.DataDir, "backup_"+time.Now().Format("20060102_150405")+".db")
-	if err := os.WriteFile(backupFile, data, 0o600); err != nil {
+	if err := store.Backup(backupFile); err != nil {
 		return "", fmt.Errorf("write backup: %w", err)
 	}
 	return backupFile, nil
@@ -536,13 +532,9 @@ func Backups(opts setup.Options) ([]string, error) {
 	return filepath.Glob(filepath.Join(opts.DataDir, "backup_*.db"))
 }
 
-// ImportBackup overwrites the database with a backup file and rebuilds from it.
+// ImportBackup replaces the node state with a backup's and rebuilds from it.
 func ImportBackup(ctx context.Context, store *db.Store, opts setup.Options, file string) error {
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return fmt.Errorf("read backup: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(opts.DataDir, "uncut.db"), data, 0o600); err != nil {
+	if err := store.Restore(file); err != nil {
 		return fmt.Errorf("restore database: %w", err)
 	}
 	return Rebuild(ctx, store, opts)

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -97,6 +98,64 @@ func migrate(db *sql.DB) error {
 
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// Backup writes a consistent snapshot to path, WAL included; a plain file copy would miss the pages still in the -wal.
+func (s *Store) Backup(path string) error {
+	_, err := s.db.Exec("VACUUM INTO ?", path)
+	return err
+}
+
+// Restore replaces settings and clients with a backup's rows in one transaction; swapping the file under open connections would let the stale -wal win.
+func (s *Store) Restore(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read backup: %w", err)
+	}
+	// A scratch copy: opening it migrates an older backup to the current schema without touching the original.
+	tmp := path + ".restore"
+	defer func() {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			_ = os.Remove(tmp + suffix)
+		}
+	}()
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return fmt.Errorf("stage backup: %w", err)
+	}
+	staged, err := New(tmp)
+	if err != nil {
+		return fmt.Errorf("open backup: %w", err)
+	}
+	_ = staged.Close()
+
+	ctx := context.Background()
+	// ATTACH is per connection: pin one for the attach, the transaction and the detach.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "ATTACH DATABASE ? AS b", tmp); err != nil {
+		return fmt.Errorf("attach backup: %w", err)
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, "DETACH DATABASE b") }()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	for _, q := range []string{
+		`DELETE FROM main.settings`,
+		`INSERT INTO main.settings (key, value) SELECT key, value FROM b.settings`,
+		`DELETE FROM main.clients`,
+		`INSERT INTO main.clients (` + clientColumns + `) SELECT ` + clientColumns + ` FROM b.clients`,
+	} {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("restore: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) GetSetting(key string) (string, error) {

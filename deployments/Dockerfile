@@ -112,8 +112,9 @@ RUN chmod +x /app/start.sh /usr/local/bin/raw /usr/local/bin/tproxy-server /usr/
 
 WORKDIR /app
 
-HEALTHCHECK --interval=15s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -fsSL --max-time 2 http://127.0.0.1:8080/ || curl -fsSL http://127.0.0.1:8088/healthz || exit 1
+# /healthz alone decides: a fallback to the tproxy page would report healthy with sing-box down. The start period covers the first certificate.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=60s --retries=3 \
+  CMD curl -fsS --max-time 2 http://127.0.0.1:8088/healthz || exit 1
 
 ENTRYPOINT ["/app/start.sh"]
 CMD ["daemon"]

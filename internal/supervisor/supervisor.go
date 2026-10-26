@@ -77,10 +77,13 @@ func (s *Supervisor) StartAll() {
 
 func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 	// One live process per ManagedProcess: a blind start here spawns a duplicate that dies on a busy bind and restarts forever.
-	if mp.Running {
+	if mp.Running || s.ctx.Err() != nil {
 		return
 	}
 	cmd := exec.CommandContext(s.ctx, mp.Spec.Command, mp.Spec.Args...)
+	// Stop is SIGTERM, not CommandContext's default SIGKILL; the grace stays under docker's own 10s kill.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
 	if mp.Spec.Dir != "" {
 		cmd.Dir = mp.Spec.Dir
 	}
@@ -88,9 +91,12 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 	stdoutW := io.Writer(os.Stdout)
 	stderrW := io.Writer(os.Stderr)
 
+	// Opened per start, closed by the monitor after Wait: a crash loop would otherwise leak one fd per restart.
+	var logFile *os.File
 	if mp.Spec.LogPath != "" {
 		_ = os.MkdirAll(filepath.Dir(mp.Spec.LogPath), 0o755)
 		if f, err := os.OpenFile(mp.Spec.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640); err == nil {
+			logFile = f
 			stdoutW = io.MultiWriter(os.Stdout, f)
 			stderrW = io.MultiWriter(os.Stderr, f)
 		}
@@ -100,6 +106,9 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 	cmd.Stderr = stderrW
 
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		slog.Error("Failed to start process", "process", name, "error", err)
 		return
 	}
@@ -114,6 +123,9 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 	cmdLocal := cmd
 	go func(n string, proc *ManagedProcess) {
 		_ = cmdLocal.Wait()
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		s.mu.Lock()
 		proc.Running = false
 		stopped := s.ctx.Err() != nil
@@ -264,17 +276,20 @@ func (s *Supervisor) GetStatus() map[string]bool {
 	return status
 }
 
+// StopAll cancels the context, which SIGTERMs every child through its Cancel, and waits for them to exit.
 func (s *Supervisor) StopAll() {
 	s.cancel()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for name, mp := range s.processes {
-		if mp.Running && mp.Cmd != nil && mp.Cmd.Process != nil {
-			slog.Info("Stopping process gracefully", "process", name, "pid", mp.Cmd.Process.Pid)
-			_ = mp.Cmd.Process.Signal(syscall.SIGTERM)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		running := false
+		for _, mp := range s.processes {
+			running = running || mp.Running
 		}
+		s.mu.Unlock()
+		if !running {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-
-	time.Sleep(500 * time.Millisecond)
 }

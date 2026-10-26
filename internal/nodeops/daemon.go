@@ -120,7 +120,11 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 	})
 
 	go tproxy.MaintainTelegramSecrets(ctx, func() {
-		slog.Info("Telegram MTProxy configuration refreshed")
+		if err := sup.RestartProcess("mtproto-proxy"); err != nil {
+			slog.Warn("Failed to restart mtproto-proxy after a Telegram config refresh", "error", err)
+			return
+		}
+		slog.Info("Telegram MTProxy configuration refreshed, mtproto-proxy restarted")
 	})
 
 	// change-domain runs in another process and cannot restart this daemon's tproxy child; watch the files and restart it when they actually change.

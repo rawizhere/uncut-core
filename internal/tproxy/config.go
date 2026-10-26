@@ -1,10 +1,13 @@
 package tproxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -189,35 +192,29 @@ func WriteConfig(installDir, domain, secret, publicDir string) error {
 	return config.WriteFileAtomic(configFile, cfgData, 0o600)
 }
 
-func MaintainTelegramSecrets(ctx context.Context, onUpdate func()) {
+// MaintainTelegramSecrets refreshes the middle-proxy secret and config now and daily; onChange runs only when a file actually changed, since mtproto-proxy reads them once at start.
+func MaintainTelegramSecrets(ctx context.Context, onChange func()) {
 	update := func() {
-		client := &http.Client{Timeout: 15 * time.Second}
-		secretResp, err := client.Get("https://core.telegram.org/getProxySecret")
-		if err == nil && secretResp.StatusCode == http.StatusOK {
-			data, err := io.ReadAll(secretResp.Body)
-			_ = secretResp.Body.Close()
-			if err == nil && len(data) > 0 {
-				_ = config.WriteFileAtomic("/etc/mtproxy/proxy-secret", data, 0o640)
+		changed := false
+		for _, f := range []struct{ url, path, marker string }{
+			{"https://core.telegram.org/getProxySecret", "/etc/mtproxy/proxy-secret", ""},
+			{"https://core.telegram.org/getProxyConfig", "/etc/mtproxy/proxy-multi.conf", "proxy_for"},
+		} {
+			c, err := refreshFile(ctx, f.url, f.path, f.marker)
+			if err != nil {
+				slog.Warn("Telegram proxy file refresh failed, keeping the current one", "url", f.url, "error", err)
+				continue
 			}
+			changed = changed || c
 		}
-
-		confResp, err := client.Get("https://core.telegram.org/getProxyConfig")
-		if err == nil && confResp.StatusCode == http.StatusOK {
-			data, err := io.ReadAll(confResp.Body)
-			_ = confResp.Body.Close()
-			if err == nil && len(data) > 0 {
-				_ = config.WriteFileAtomic("/etc/mtproxy/proxy-multi.conf", data, 0o640)
-			}
-		}
-
-		if onUpdate != nil {
-			onUpdate()
+		if changed && onChange != nil {
+			onChange()
 		}
 	}
 
+	update()
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -226,4 +223,31 @@ func MaintainTelegramSecrets(ctx context.Context, onUpdate func()) {
 			update()
 		}
 	}
+}
+
+// refreshFile replaces path with the body at url when it differs; a body without marker is an error page, not a config.
+func refreshFile(ctx context.Context, url, path, marker string) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false, err
+	}
+	if len(data) == 0 || !bytes.Contains(data, []byte(marker)) {
+		return false, errors.New("unexpected body")
+	}
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, data) {
+		return false, nil
+	}
+	return true, config.WriteFileAtomic(path, data, 0o640)
 }

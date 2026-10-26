@@ -623,7 +623,7 @@ func (m *Menu) switchSingboxVersion(ctx context.Context) {
 }
 
 func (m *Menu) exportBackup() {
-	backupFile, err := nodeops.ExportBackup(m.opts)
+	backupFile, err := nodeops.ExportBackup(m.store, m.opts)
 	if err != nil {
 		fmt.Printf("Backup failed: %v\n\n", err)
 		return
