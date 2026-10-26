@@ -46,36 +46,23 @@ const (
 	limitsFile = confDir + "/00-uncut-limits.conf"
 )
 
-func WriteFiles(opts GeneratorOptions) error {
+// Files renders every nginx file by path and creates the directories they and the server config point at; the caller writes and checks them as one set.
+func Files(opts GeneratorOptions) (map[string][]byte, error) {
 	for _, dir := range []string{confDir, opts.SubsDir, opts.LogDir, opts.WebRoot, StreamConfDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create %s: %w", dir, err)
+			return nil, fmt.Errorf("create %s: %w", dir, err)
 		}
-	}
-
-	if err := config.WriteFileAtomic(serverFile, []byte(GenerateServerConfig(opts)), 0o644); err != nil {
-		return err
 	}
 	// The stream splitter lives at main context, outside the server conf.
 	streamBody, err := GenerateStreamConfig(opts)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := config.WriteFileAtomic(filepath.Join(StreamConfDir, StreamFileName), []byte(streamBody), 0o644); err != nil {
-		return err
-	}
-	return writeLimits(limitsFile)
-}
-
-func writeLimits(path string) error {
-	body := fmt.Sprintf("limit_req_zone $binary_remote_addr zone=%s:10m rate=%s;\n", subsZoneName, subsRate)
-
-	if existing, err := os.ReadFile(path); err == nil {
-		if strings.Contains(string(existing), "zone="+subsZoneName) {
-			return nil
-		}
-	}
-	return config.WriteFileAtomic(path, []byte(body), 0o644)
+	return map[string][]byte{
+		serverFile: []byte(GenerateServerConfig(opts)),
+		filepath.Join(StreamConfDir, StreamFileName): []byte(streamBody),
+		limitsFile: fmt.Appendf(nil, "limit_req_zone $binary_remote_addr zone=%s:10m rate=%s;\n", subsZoneName, subsRate),
+	}, nil
 }
 
 // GenerateStreamConfig splits TCP 443 by SNI: reality → 8443, FakeTLS → its instance, else → https. A tls domain equal to the reality SNI is an error.

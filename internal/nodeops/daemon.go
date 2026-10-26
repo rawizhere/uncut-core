@@ -2,13 +2,15 @@ package nodeops
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/rawizhere/uncut-core/internal/acme"
@@ -43,33 +45,34 @@ func mtprotoSpec(settings *config.Settings, logsDir string) supervisor.ProcessSp
 	}
 }
 
-// Daemon supervises sing-box, nginx, mtproto-proxy and tproxy-server, with ACME upkeep and a loopback probe endpoint.
-func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts setup.Options) error {
-
-	settings, err := setup.Bootstrap(ctx, store, appCfg, opts)
-	if err != nil {
-		return fmt.Errorf("ensure setup: %w", err)
-	}
-
-	logsDir := filepath.Join(opts.DataDir, "logs")
-	_ = os.MkdirAll(logsDir, 0o755)
-
-	sup := supervisor.New()
-	sbSpec := supervisor.ProcessSpec{
+// singboxSpec resolves the binary at each call: a Maintenance-installed copy on the volume wins over the image pin.
+func singboxSpec(settings *config.Settings, opts setup.Options, logsDir string) supervisor.ProcessSpec {
+	spec := supervisor.ProcessSpec{
 		Name:    "sing-box",
 		Command: updater.SingBoxBin(opts.InstallDir),
 		Args:    []string{"run", "-c", filepath.Join(opts.InstallDir, "config.json")},
 		LogPath: filepath.Join(logsDir, "sing-box.log"),
 	}
 	// Probe through the reality inbound: a hung sing-box still shows in the process table, only a TLS handshake tells a serving one.
-	for _, p := range settings.Protocols {
-		if p == string(config.ProtoVLESSReality) {
-			sbSpec.ProbeAddr = "127.0.0.1:8443"
-			sbSpec.ProbeSNI = settings.RealityServerName
-			break
-		}
+	if slices.Contains(settings.Protocols, string(config.ProtoVLESSReality)) {
+		spec.ProbeAddr = "127.0.0.1:8443"
+		spec.ProbeSNI = settings.RealityServerName
 	}
-	sup.AddProcess(sbSpec)
+	return spec
+}
+
+// Daemon supervises sing-box, nginx, mtproto-proxy, tproxy-server and coredns, with ACME upkeep and the loopback probe and control endpoint.
+func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts setup.Options) error {
+	settings, err := setup.Bootstrap(ctx, store, appCfg, opts)
+	if err != nil {
+		return fmt.Errorf("bootstrap: %w", err)
+	}
+
+	logsDir := filepath.Join(opts.DataDir, "logs")
+	_ = os.MkdirAll(logsDir, 0o755)
+
+	sup := supervisor.New()
+	sup.AddProcess(singboxSpec(&settings, opts, logsDir))
 	sup.AddProcess(supervisor.ProcessSpec{
 		Name:    "nginx",
 		Command: "nginx",
@@ -91,9 +94,34 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 		LogPath: filepath.Join(logsDir, "coredns.log"),
 	})
 
-	acmeMgr := acme.New(settings.Domain, settings.Email, opts.CertsDir(), opts.WebRoot)
+	// rebuild is the one write path: commands reach it through /reload, the ACME loop after an issuance. It re-reads the settings, so the specs follow sync-ip, set-sni and set-protocols.
+	var mu sync.Mutex
+	rebuild := func(ctx context.Context, restart []string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if err := setup.RebuildAll(ctx, store, sup, opts); err != nil {
+			return err
+		}
+		s, err := setup.Load(store, opts)
+		if err != nil {
+			return err
+		}
+		for _, spec := range []supervisor.ProcessSpec{singboxSpec(&s, opts, logsDir), mtprotoSpec(&s, logsDir)} {
+			if sup.Respec(spec) && !slices.Contains(restart, spec.Name) {
+				restart = append(restart, spec.Name)
+			}
+		}
+		for _, name := range restart {
+			if err := sup.RestartProcess(name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// The first pass renders only; a failed check keeps the configs on disk instead of taking the whole node down.
 	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
-		return fmt.Errorf("rebuild configs: %w", err)
+		slog.Error("Initial render failed, starting with the configs on disk", "error", err)
 	}
 
 	sup.StartAll()
@@ -112,10 +140,16 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 		slog.Info("Telegram bridge self-check passed", "domain", settings.Domain)
 	}()
 
-	go acmeMgr.Maintain(ctx, func() {
-		// Re-render (the ssl block exists only once a cert does, Hysteria2 re-reads) — RebuildAll reloads both consumers.
-		if err := setup.RebuildAll(ctx, store, sup, opts); err != nil {
-			slog.Warn("Failed to rebuild configs after cert renewal", "error", err)
+	go acme.Maintain(ctx, func() (*acme.Manager, error) {
+		s, err := setup.Load(store, opts)
+		if err != nil {
+			return nil, err
+		}
+		return acme.New(s.Domain, s.Email, opts.CertsDir(), opts.WebRoot), nil
+	}, func() {
+		// The ssl server and the hysteria2 inbound exist only once a cert does.
+		if err := rebuild(ctx, nil); err != nil {
+			slog.Warn("Failed to rebuild configs after certificate issuance", "error", err)
 		}
 	})
 
@@ -127,10 +161,7 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 		slog.Info("Telegram MTProxy configuration refreshed, mtproto-proxy restarted")
 	})
 
-	// change-domain runs in another process and cannot restart this daemon's tproxy child; watch the files and restart it when they actually change.
-	go watchTproxyConfig(ctx, sup, opts.InstallDir)
-
-	go serveHealth(ctx, sup)
+	go serveControl(ctx, sup, rebuild)
 
 	slog.Info("Uncut Core daemon started successfully", "timezone", appCfg.Timezone, "domain", settings.Domain)
 	<-ctx.Done()
@@ -138,8 +169,8 @@ func Daemon(ctx context.Context, store *db.Store, appCfg *config.AppConfig, opts
 	return nil
 }
 
-// serveHealth exposes aggregate process status on 127.0.0.1:8088 for probes.
-func serveHealth(ctx context.Context, sup *supervisor.Supervisor) {
+// serveControl is the loopback listener: /healthz for probes, POST /reload for the commands that changed the store.
+func serveControl(ctx context.Context, sup *supervisor.Supervisor, rebuild func(context.Context, []string) error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		status := sup.GetStatus()
@@ -162,56 +193,27 @@ func serveHealth(ctx context.Context, sup *supervisor.Supervisor) {
 			"time":      time.Now().Format(time.RFC3339),
 		})
 	})
+	mux.HandleFunc("POST /reload", func(w http.ResponseWriter, r *http.Request) {
+		var restart []string
+		if v := r.URL.Query().Get("restart"); v != "" {
+			restart = strings.Split(v, ",")
+		}
+		if err := rebuild(r.Context(), restart); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
 	server := &http.Server{
-		Addr:         "127.0.0.1:8088",
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		Addr:        setup.DaemonAddr,
+		Handler:     mux,
+		ReadTimeout: 5 * time.Second,
+		// A reload runs the config checks and may wait out a child restart.
+		WriteTimeout: 90 * time.Second,
 	}
 	go func() {
 		<-ctx.Done()
 		_ = server.Shutdown(context.Background())
 	}()
 	_ = server.ListenAndServe()
-}
-
-// watchTproxyConfig restarts tproxy-server when its config files change; tproxy reads them only at startup.
-func watchTproxyConfig(ctx context.Context, sup *supervisor.Supervisor, installDir string) {
-	cfgPath := filepath.Join(installDir, "tproxy", "config.json")
-	profilesPath := filepath.Join(installDir, "tproxy", "profiles.json")
-	hash := func() string {
-		h := sha256.New()
-		for _, p := range []string{cfgPath, profilesPath} {
-			data, err := os.ReadFile(p)
-			if err != nil {
-				return ""
-			}
-			h.Write(data)
-		}
-		return fmt.Sprintf("%x", h.Sum(nil))
-	}
-
-	last := hash()
-	if last == "" {
-		return // files not there yet: nothing to watch
-	}
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			cur := hash()
-			if cur == "" || cur == last {
-				continue
-			}
-			last = cur
-			if err := sup.RestartProcess("tproxy-server"); err != nil {
-				slog.Warn("Failed to restart tproxy after config change", "error", err)
-				continue
-			}
-			slog.Info("Restarted tproxy-server: its configuration changed on disk")
-		}
-	}
 }

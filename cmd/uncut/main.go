@@ -152,7 +152,11 @@ func singboxVersionCmd() *cobra.Command {
 			if err := updater.InstallSingboxVersion(ctx, target, filepath.Join(installDir, "bin", "sing-box")); err != nil {
 				return err
 			}
-			fmt.Println("Sing-box installed; the running instance restarts on the next reload.")
+			if err := setup.Reload(ctx, "sing-box"); err != nil {
+				fmt.Printf("Sing-box installed; not switched yet: %v\n", err)
+				return nil
+			}
+			fmt.Println("Sing-box installed and restarted onto the new binary.")
 			return nil
 		},
 	}
@@ -304,7 +308,7 @@ func renewCertCmd() *cobra.Command {
 		Use:   "renew-cert",
 		Short: "Force renewal of SSL/TLS certificate",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := nodeops.RenewCert(store, opts); err != nil {
+			if err := nodeops.RenewCert(cmd.Context(), store, opts); err != nil {
 				return err
 			}
 			fmt.Println("SSL/TLS certificate renewed successfully and Nginx reloaded.")
@@ -608,7 +612,7 @@ func setCertCmd() *cobra.Command {
 				return fmt.Errorf("decode key: %w", err)
 			}
 
-			domain, err := nodeops.SetCert(store, opts, certData, keyData)
+			domain, err := nodeops.SetCert(cmd.Context(), store, opts, certData, keyData)
 			if err != nil {
 				return err
 			}

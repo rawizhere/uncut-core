@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -158,6 +159,23 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 		}
 		s.startProcess(n, proc)
 	}(name, mp)
+}
+
+// Respec replaces a registered process's spec for its next start and reports whether it changed; the caller restarts it.
+func (s *Supervisor) Respec(spec ProcessSpec) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	mp, ok := s.processes[spec.Name]
+	if !ok {
+		return false
+	}
+	cur := mp.Spec
+	if cur.Command == spec.Command && slices.Equal(cur.Args, spec.Args) && cur.Dir == spec.Dir &&
+		cur.LogPath == spec.LogPath && cur.ProbeAddr == spec.ProbeAddr && cur.ProbeSNI == spec.ProbeSNI {
+		return false
+	}
+	mp.Spec = spec
+	return true
 }
 
 func (s *Supervisor) ReloadSingBox() error {

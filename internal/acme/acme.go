@@ -23,10 +23,8 @@ import (
 	"github.com/rawizhere/uncut-core/internal/config"
 )
 
-const (
-	renewBefore   = 30 * 24 * time.Hour
-	renewInterval = 24 * time.Hour
-)
+// checkInterval is cheap (a local file parse while valid) and short enough to pick up a change-domain whose own issuance failed.
+const checkInterval = time.Hour
 
 var errNoCertificate = errors.New("no certificate")
 
@@ -70,44 +68,29 @@ func (m *Manager) ForceRenew() error {
 	return m.issue()
 }
 
-func (m *Manager) Maintain(ctx context.Context, onRenew func()) {
-	// Attempt issuance with initial exponential backoff
+// Maintain keeps the certificate of whatever domain current() names valid; the manager is rebuilt every round, so a change-domain lands without a daemon restart. Failures retry with backoff.
+func Maintain(ctx context.Context, current func() (*Manager, error), onRenew func()) {
 	backoff := 5 * time.Second
-	for !m.valid() {
-		issued, err := m.Ensure()
-		if err == nil && issued {
-			if onRenew != nil {
+	for {
+		wait := checkInterval
+		m, err := current()
+		if err == nil {
+			var issued bool
+			if issued, err = m.Ensure(); err == nil && issued && onRenew != nil {
 				onRenew()
 			}
-			break
 		}
 		if err != nil {
-			slog.Warn("Certificate issuance failed, retrying in background...", "domain", m.domain, "backoff", backoff, "error", err)
+			slog.Warn("Certificate issuance failed, retrying", "backoff", backoff, "error", err)
+			wait = backoff
+			backoff = min(backoff*2, 10*time.Minute)
+		} else {
+			backoff = 5 * time.Second
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(backoff):
-			backoff *= 2
-			if backoff > 10*time.Minute {
-				backoff = 10 * time.Minute
-			}
-		}
-	}
-
-	ticker := time.NewTicker(renewInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if issued, err := m.Ensure(); err != nil {
-				slog.Warn("Certificate renewal failed", "domain", m.domain, "error", err)
-			} else if issued && onRenew != nil {
-				onRenew()
-			}
+		case <-time.After(wait):
 		}
 	}
 }
@@ -117,7 +100,8 @@ func (m *Manager) valid() bool {
 	if err != nil {
 		return false
 	}
-	return time.Until(cert.NotAfter) > renewBefore
+	// Renew in the last third of the lifetime: 30 days of a 90-day cert, and still right as Let's Encrypt shortens lifetimes.
+	return time.Until(cert.NotAfter) > cert.NotAfter.Sub(cert.NotBefore)/3
 }
 
 // Expires reports the certificate's expiry; the renewal window uses it.

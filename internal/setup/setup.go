@@ -1,17 +1,22 @@
 package setup
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rawizhere/uncut-core/internal/config"
 	"github.com/rawizhere/uncut-core/internal/core"
@@ -21,6 +26,7 @@ import (
 	"github.com/rawizhere/uncut-core/internal/supervisor"
 	"github.com/rawizhere/uncut-core/internal/tproxy"
 	"github.com/rawizhere/uncut-core/internal/transport"
+	"github.com/rawizhere/uncut-core/internal/updater"
 	"golang.org/x/crypto/curve25519"
 )
 
@@ -190,6 +196,7 @@ func SaveTransport(store *db.Store, t *transport.Transport) error {
 	return store.SetSetting("transport", string(data))
 }
 
+// RebuildAll renders every config, checks it with its own consumer before it lands, and reloads the running children; a nil sup renders only (the daemon's first pass, before anything runs). Only the daemon calls it — commands go through Reload.
 func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor, opts Options) error {
 	settings, err := Load(store, opts)
 	if err != nil {
@@ -201,24 +208,37 @@ func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor
 		return fmt.Errorf("load clients: %w", err)
 	}
 
-	if err := core.RegenerateAllSubscriptions(store, opts.SubsDir, settings); err != nil {
-		return fmt.Errorf("regenerate subscriptions: %w", err)
-	}
-
 	sbConfig, err := singbox.GenerateConfig(settings, clients)
 	if err != nil {
 		return fmt.Errorf("generate sing-box config: %w", err)
 	}
-	if err := write(filepath.Join(opts.InstallDir, "config.json"), sbConfig, 0o600); err != nil {
-		return err
+	sbPath := filepath.Join(opts.InstallDir, "config.json")
+	if _, err := writeChecked(map[string][]byte{sbPath: sbConfig}, 0o600, func() error {
+		return run(ctx, updater.SingBoxBin(opts.InstallDir), "check", "-c", sbPath)
+	}); err != nil {
+		return fmt.Errorf("sing-box config: %w", err)
 	}
 
-	if err := nginx.WriteFiles(generatorOptions(settings, opts)); err != nil {
-		return fmt.Errorf("write nginx files: %w", err)
+	ngFiles, err := nginx.Files(generatorOptions(settings, opts))
+	if err != nil {
+		return fmt.Errorf("render nginx files: %w", err)
+	}
+	if _, err := writeChecked(ngFiles, 0o644, func() error { return run(ctx, "nginx", "-t") }); err != nil {
+		return fmt.Errorf("nginx config: %w", err)
 	}
 
-	if err := tproxy.WriteConfig(opts.InstallDir, settings.Domain, settings.WebProxySecret, tproxy.DefaultPublicDir); err != nil {
-		return fmt.Errorf("write tproxy config: %w", err)
+	tpFiles, err := tproxy.Files(opts.InstallDir, settings.Domain, settings.WebProxySecret, tproxy.DefaultPublicDir)
+	if err != nil {
+		return fmt.Errorf("render tproxy config: %w", err)
+	}
+	tpChanged, err := writeChecked(tpFiles, 0o600, nil)
+	if err != nil {
+		return fmt.Errorf("tproxy config: %w", err)
+	}
+
+	// Subscriptions last: they must never advertise a config that failed its check.
+	if err := core.RegenerateAllSubscriptions(store, opts.SubsDir, settings); err != nil {
+		return fmt.Errorf("regenerate subscriptions: %w", err)
 	}
 
 	if sup != nil {
@@ -229,12 +249,77 @@ func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor
 		if err := sup.ReloadNginx(); err != nil {
 			slog.Warn("Failed to reload nginx", "error", err)
 		}
-	} else {
-		_ = exec.Command("pkill", "-HUP", "sing-box").Run()
-		_ = exec.Command("nginx", "-s", "reload").Run()
+		if tpChanged {
+			if err := sup.RestartProcess("tproxy-server"); err != nil {
+				slog.Warn("Failed to restart tproxy-server after its config changed", "error", err)
+			}
+		}
 	}
 
-	slog.Info("Configurations rebuilt and reloaded gracefully", "clients", len(clients), "domain", settings.Domain)
+	slog.Info("Configurations rebuilt", "clients", len(clients), "domain", settings.Domain, "reloaded", sup != nil)
+	return nil
+}
+
+// writeChecked writes the files, runs check, and on failure puts the previous versions back so a bad render never replaces a working config; a file with no previous version stays, there is nothing better to serve. It reports whether any file changed.
+func writeChecked(files map[string][]byte, perm os.FileMode, check func() error) (bool, error) {
+	old := make(map[string][]byte, len(files))
+	changed := false
+	for path, data := range files {
+		prev, err := os.ReadFile(path)
+		if err == nil {
+			old[path] = prev
+		}
+		if err == nil && bytes.Equal(prev, data) {
+			continue
+		}
+		changed = true
+		if err := config.WriteFileAtomic(path, data, perm); err != nil {
+			return changed, err
+		}
+	}
+	if !changed || check == nil {
+		return changed, nil
+	}
+	if err := check(); err != nil {
+		for path, prev := range old {
+			_ = config.WriteFileAtomic(path, prev, perm)
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// run executes a config check and folds its output into the error, which is where the check says what is wrong.
+func run(ctx context.Context, name string, args ...string) error {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// DaemonAddr is the daemon's loopback control and probe listener.
+const DaemonAddr = "127.0.0.1:8088"
+
+// Reload asks the daemon to re-render and reload, restarting the named children after: the daemon is the only writer of configs and the only holder of the children.
+func Reload(ctx context.Context, restart ...string) error {
+	u := "http://" + DaemonAddr + "/reload"
+	if len(restart) > 0 {
+		u += "?restart=" + url.QueryEscape(strings.Join(restart, ","))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 90 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("daemon not reachable, the change is saved and applies on its next start: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("daemon reload: %s", strings.TrimSpace(string(body)))
+	}
 	return nil
 }
 
@@ -305,10 +390,6 @@ func get(store *db.Store, key string) string {
 		return ""
 	}
 	return value
-}
-
-func write(path string, data []byte, perm os.FileMode) error {
-	return config.WriteFileAtomic(path, data, perm)
 }
 
 // mergeDefaultProtocols appends post-init default protocols to non-explicit lists; explicit lists stay alone (merging resurrected disabled protocols).

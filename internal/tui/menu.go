@@ -526,7 +526,7 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 				huh.NewSelect[string]().
 					Title("Maintenance & Operations:").
 					Options(
-						huh.NewOption("1. Restart All Services", "restart"),
+						huh.NewOption("1. Rebuild & Reload Configs", "restart"),
 						huh.NewOption("2. Switch Sing-box Extended Version", "singbox_version"),
 						huh.NewOption("3. Renew TLS Certificate", "renew_cert"),
 						huh.NewOption("4. Export Database Backup", "backup"),
@@ -543,15 +543,15 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 
 		switch mAction {
 		case "restart":
-			if err := nodeops.Rebuild(ctx, m.store, m.opts); err != nil {
+			if err := setup.Reload(ctx); err != nil {
 				fmt.Printf("Error: %v\n", err)
 				break
 			}
-			fmt.Println("\nAll system services restarted successfully.")
+			fmt.Println("\nConfigurations rebuilt and services reloaded.")
 		case "singbox_version":
 			m.switchSingboxVersion(ctx)
 		case "renew_cert":
-			m.renewCertificate()
+			m.renewCertificate(ctx)
 		case "backup":
 			m.exportBackup()
 		case "import_backup":
@@ -560,7 +560,7 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 	}
 }
 
-func (m *Menu) renewCertificate() {
+func (m *Menu) renewCertificate(ctx context.Context) {
 	settings := m.loaded()
 	if settings == nil {
 		fmt.Println("Failed to load settings.")
@@ -568,7 +568,7 @@ func (m *Menu) renewCertificate() {
 	}
 
 	fmt.Printf("\nRequesting TLS certificate for %s...\n", settings.Domain)
-	if err := nodeops.RenewCert(m.store, m.opts); err != nil {
+	if err := nodeops.RenewCert(ctx, m.store, m.opts); err != nil {
 		fmt.Printf("Certificate issuance error: %v\n\n", err)
 		return
 	}
@@ -615,7 +615,7 @@ func (m *Menu) switchSingboxVersion(ctx context.Context) {
 	}
 
 	fmt.Printf("Downloading and installing %s...\n", targetVer)
-	if err := nodeops.SwitchSingbox(ctx, m.store, m.opts, targetVer); err != nil {
+	if err := nodeops.SwitchSingbox(ctx, m.opts, targetVer); err != nil {
 		fmt.Printf("Installation error: %v\n\n", err)
 		return
 	}

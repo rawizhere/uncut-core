@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -180,6 +181,12 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		domain := settings.Domain
 		certPath := filepath.Join(installDir, "certs", "certificates", domain+".crt")
 		keyPath := filepath.Join(installDir, "certs", "certificates", domain+".key")
+		// sing-box refuses to start on a missing cert file and takes reality down with it; the inbound appears with the first certificate, as nginx's ssl server does.
+		for _, p := range []string{certPath, keyPath} {
+			if _, err := os.Stat(p); err != nil {
+				return nil, nil
+			}
+		}
 
 		// sing-box requires a tls block even though the transport is QUIC; the LE cert keeps client verification honest.
 		inbound := map[string]any{

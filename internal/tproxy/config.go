@@ -136,10 +136,11 @@ const DefaultPublicDir = "/srv/tproxy-site"
 // DefaultBackend is the loopback mtproto-proxy only tproxy itself may reach.
 const DefaultBackend = "127.0.0.1:2398"
 
-func WriteConfig(installDir, domain, secret, publicDir string) error {
+// Files renders the tproxy config and profiles by path; tproxy reads them only at startup, so the caller restarts it when they change.
+func Files(installDir, domain, secret, publicDir string) (map[string][]byte, error) {
 	tproxyDir := filepath.Join(installDir, "tproxy")
 	if err := os.MkdirAll(tproxyDir, 0o700); err != nil {
-		return fmt.Errorf("create tproxy dir: %w", err)
+		return nil, fmt.Errorf("create tproxy dir: %w", err)
 	}
 
 	if publicDir == "" {
@@ -151,7 +152,7 @@ func WriteConfig(installDir, domain, secret, publicDir string) error {
 
 	// tproxy-server refuses to start without an index in public_dir.
 	if err := ensureSiteIndex(publicDir); err != nil {
-		return fmt.Errorf("ensure tproxy site index: %w", err)
+		return nil, fmt.Errorf("ensure tproxy site index: %w", err)
 	}
 
 	profiles := ProfilesConfig{
@@ -178,18 +179,14 @@ func WriteConfig(installDir, domain, secret, publicDir string) error {
 
 	profilesData, err := json.MarshalIndent(profiles, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal profiles: %w", err)
+		return nil, fmt.Errorf("marshal profiles: %w", err)
 	}
 
 	cfgData, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return nil, fmt.Errorf("marshal config: %w", err)
 	}
-
-	if err := config.WriteFileAtomic(profilesFile, profilesData, 0o600); err != nil {
-		return err
-	}
-	return config.WriteFileAtomic(configFile, cfgData, 0o600)
+	return map[string][]byte{profilesFile: profilesData, configFile: cfgData}, nil
 }
 
 // MaintainTelegramSecrets refreshes the middle-proxy secret and config now and daily; onChange runs only when a file actually changed, since mtproto-proxy reads them once at start.

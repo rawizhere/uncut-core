@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -95,7 +94,7 @@ func AddClient(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, err
 	}
 
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 
@@ -120,7 +119,7 @@ func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name st
 		return nil, err
 	}
 
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 
@@ -128,14 +127,14 @@ func RotateSub(ctx context.Context, store *db.Store, opts setup.Options, name st
 	return &view, nil
 }
 
-// findClient resolves a client by exact name.
+// findClient resolves a client by exact name or UUID.
 func findClient(store *db.Store, name string) (*config.Client, error) {
 	clients, err := store.GetClients()
 	if err != nil {
 		return nil, err
 	}
 	for i := range clients {
-		if clients[i].Name == name {
+		if clients[i].Name == name || clients[i].UUID == name {
 			return &clients[i], nil
 		}
 	}
@@ -158,7 +157,7 @@ func SetClientProtocols(ctx context.Context, store *db.Store, opts setup.Options
 	if _, err := core.UpdateClientProtocols(store, client.UUID, sanitized); err != nil {
 		return nil, err
 	}
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 	return clientViewAfter(ctx, store, opts, client.UUID)
@@ -173,7 +172,7 @@ func InheritClientProtocols(ctx context.Context, store *db.Store, opts setup.Opt
 	if _, err := core.InheritClientProtocols(store, client.UUID); err != nil {
 		return nil, err
 	}
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 	return clientViewAfter(ctx, store, opts, client.UUID)
@@ -186,7 +185,7 @@ func SetMTProtoTLSDomain(ctx context.Context, store *db.Store, opts setup.Option
 		if err := store.SetSetting("mtproto_tls_domain", ""); err != nil {
 			return "", err
 		}
-		if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+		if err := setup.Reload(ctx); err != nil {
 			return "", fmt.Errorf("rebuild configs: %w", err)
 		}
 		return "", nil
@@ -215,7 +214,7 @@ func SetMTProtoTLSDomain(ctx context.Context, store *db.Store, opts setup.Option
 	if err := store.SetSetting("mtproto_tls_domain", domain); err != nil {
 		return "", err
 	}
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return "", fmt.Errorf("rebuild configs: %w", err)
 	}
 	return domain, nil
@@ -243,7 +242,7 @@ func SetRealitySNI(ctx context.Context, store *db.Store, opts setup.Options, hos
 	if err := setup.SaveTransport(store, settings.Transport); err != nil {
 		return "", err
 	}
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return "", fmt.Errorf("rebuild configs: %w", err)
 	}
 	return settings.Transport.Rev(), nil
@@ -267,23 +266,14 @@ func DeleteClient(ctx context.Context, store *db.Store, opts setup.Options, name
 	if name == "" {
 		return errors.New("client name or UUID is required")
 	}
-
-	clients, _ := store.GetClients()
-	var targetUUID string
-	for _, c := range clients {
-		if c.Name == name || c.UUID == name {
-			targetUUID = c.UUID
-			break
-		}
-	}
-	if targetUUID == "" {
-		return fmt.Errorf("client %s not found", name)
-	}
-
-	if err := core.DeleteClient(store, opts.SubsDir, targetUUID); err != nil {
+	client, err := findClient(store, name)
+	if err != nil {
 		return err
 	}
-	return setup.RebuildAll(ctx, store, nil, opts)
+	if err := core.DeleteClient(store, opts.SubsDir, client.UUID); err != nil {
+		return err
+	}
+	return setup.Reload(ctx)
 }
 
 // ListClients returns the node's clients plus the fqdn and raw secret link builders need.
@@ -320,14 +310,14 @@ func SyncIP(ctx context.Context, store *db.Store, opts setup.Options, forceIP st
 		newIP = ip
 	}
 
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return "", fmt.Errorf("rebuild configs: %w", err)
 	}
 	return newIP, nil
 }
 
-// RenewCert forces issuance and reloads nginx + sing-box (Hysteria2).
-func RenewCert(store *db.Store, opts setup.Options) error {
+// RenewCert forces issuance and has the daemon reload nginx and sing-box (Hysteria2).
+func RenewCert(ctx context.Context, store *db.Store, opts setup.Options) error {
 	settings, err := setup.Load(store, opts)
 	if err != nil {
 		return err
@@ -337,10 +327,7 @@ func RenewCert(store *db.Store, opts setup.Options) error {
 	if err := mgr.ForceRenew(); err != nil {
 		return fmt.Errorf("certificate issuance failed: %w", err)
 	}
-
-	_ = exec.Command("nginx", "-s", "reload").Run()
-	_ = exec.Command("pkill", "-HUP", "sing-box").Run()
-	return nil
+	return setup.Reload(ctx)
 }
 
 // ChangeDomain stores the new fqdn, re-issues the cert, rebuilds all.
@@ -361,11 +348,9 @@ func ChangeDomain(ctx context.Context, store *db.Store, opts setup.Options, newD
 		slog.Warn("TLS certificate request failed", "error", err)
 	}
 
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return fmt.Errorf("rebuild configs: %w", err)
 	}
-
-	_ = exec.Command("nginx", "-s", "reload").Run()
 	return nil
 }
 
@@ -423,7 +408,7 @@ func RotatePaths(ctx context.Context, store *db.Store, opts setup.Options) (stri
 	if err := setup.SaveTransport(store, t); err != nil {
 		return "", err
 	}
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return "", fmt.Errorf("rebuild configs: %w", err)
 	}
 	return t.Rev(), nil
@@ -445,7 +430,7 @@ func SetProtocols(ctx context.Context, store *db.Store, opts setup.Options, prot
 	if err := store.SetSetting("protocols_explicit", "true"); err != nil {
 		return nil, fmt.Errorf("mark protocols explicit: %w", err)
 	}
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return nil, fmt.Errorf("rebuild configs: %w", err)
 	}
 	return resolved, nil
@@ -465,14 +450,14 @@ func SetHysteria2Bandwidth(ctx context.Context, store *db.Store, opts setup.Opti
 			return fmt.Errorf("save %s: %w", key, err)
 		}
 	}
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
+	if err := setup.Reload(ctx); err != nil {
 		return fmt.Errorf("rebuild configs: %w", err)
 	}
 	return nil
 }
 
 // SetCert installs a custom certificate and reloads nginx + sing-box.
-func SetCert(store *db.Store, opts setup.Options, certData, keyData []byte) (string, error) {
+func SetCert(ctx context.Context, store *db.Store, opts setup.Options, certData, keyData []byte) (string, error) {
 	domain, err := store.GetSetting("domain")
 	if err != nil || domain == "" {
 		return "", fmt.Errorf("domain not found in settings: %w", err)
@@ -491,25 +476,15 @@ func SetCert(store *db.Store, opts setup.Options, certData, keyData []byte) (str
 		return "", fmt.Errorf("write key: %w", err)
 	}
 
-	_ = exec.Command("nginx", "-s", "reload").Run()
-	_ = exec.Command("pkill", "-HUP", "sing-box").Run()
-	return domain, nil
+	return domain, setup.Reload(ctx)
 }
 
-// Rebuild re-renders every config and reloads the services.
-func Rebuild(ctx context.Context, store *db.Store, opts setup.Options) error {
-	if err := setup.RebuildAll(ctx, store, nil, opts); err != nil {
-		return fmt.Errorf("rebuild configs: %w", err)
-	}
-	return nil
-}
-
-// SwitchSingbox installs a sing-box release and rebuilds, so the new binary takes over now rather than on the next reload.
-func SwitchSingbox(ctx context.Context, store *db.Store, opts setup.Options, version string) error {
+// SwitchSingbox installs a sing-box release and has the daemon restart onto it now; a reload alone keeps the old binary running.
+func SwitchSingbox(ctx context.Context, opts setup.Options, version string) error {
 	if err := updater.InstallSingboxVersion(ctx, version, filepath.Join(opts.InstallDir, "bin", "sing-box")); err != nil {
 		return err
 	}
-	return Rebuild(ctx, store, opts)
+	return setup.Reload(ctx, "sing-box")
 }
 
 // ExportBackup snapshots the database to backup_<timestamp>.db in the data directory and returns its path.
@@ -531,5 +506,5 @@ func ImportBackup(ctx context.Context, store *db.Store, opts setup.Options, file
 	if err := store.Restore(file); err != nil {
 		return fmt.Errorf("restore database: %w", err)
 	}
-	return Rebuild(ctx, store, opts)
+	return setup.Reload(ctx)
 }
