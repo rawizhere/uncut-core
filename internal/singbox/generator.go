@@ -204,16 +204,11 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}
 		// Brutal runs only for clients that send their own rate, capped at the server values; everyone else gets BBR, and aggressive keeps more in flight on high-RTT links.
 		inbound["bbr_profile"] = "aggressive"
-		hasCaps := false
 		for key, raw := range map[string]string{"up_mbps": settings.Hysteria2UpMbps, "down_mbps": settings.Hysteria2DownMbps} {
 			n, err := strconv.Atoi(strings.TrimSpace(raw))
 			if err == nil && n > 0 {
 				inbound[key] = n
-				hasCaps = true
 			}
-		}
-		if hasCaps {
-			inbound["ignore_client_bandwidth"] = true
 		}
 		if settings.Hysteria2Obfs != "" {
 			inbound["obfs"] = map[string]any{"type": "salamander", "password": settings.Hysteria2Obfs}
