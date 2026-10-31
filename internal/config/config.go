@@ -198,7 +198,7 @@ type Settings struct {
 
 const (
 	DefaultDomain = "node.example.com"
-	DefaultSNI    = "dl.google.com"
+	DefaultSNI    = "www.samsung.com"
 	// Hysteria2 owns UDP 443 (the splitter is TCP-only); 8443 stays loopback.
 	Hysteria2Port = "443"
 	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.

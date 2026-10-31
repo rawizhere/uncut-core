@@ -14,7 +14,7 @@ import (
 const HashToken = "{hash}"
 
 // DefaultRealitySNI is the SNI a fresh transport hands the REALITY handshake.
-const DefaultRealitySNI = "dl.google.com"
+const DefaultRealitySNI = "www.samsung.com"
 
 // SubHashPattern matches the subscription token: 16 random bytes, so 32 hex digits.
 const SubHashPattern = "[a-f0-9]{32}"
