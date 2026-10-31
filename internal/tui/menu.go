@@ -735,4 +735,3 @@ func (m *Menu) setHysteriaBandwidth(ctx context.Context) {
 		fmt.Printf("\nHysteria 2 bandwidth set: up %d Mbps, down %d Mbps.\n", up, down)
 	}
 }
-

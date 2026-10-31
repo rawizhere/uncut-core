@@ -1,5 +1,5 @@
 # MTProxy C builder on Debian (glibc)
-FROM public.ecr.aws/docker/library/debian:bookworm-slim AS mtproxy-builder
+FROM debian:bookworm-slim AS mtproxy-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -20,7 +20,7 @@ RUN git clone https://github.com/TelegramMessenger/MTProxy.git /tmp/MTProxy \
     && cp objs/bin/mtproto-proxy /build/mtproto-proxy
 
 # Go builder (pinned: a floating golang tag silently moves the toolchain)
-FROM public.ecr.aws/docker/library/golang:1.27-alpine AS go-builder
+FROM golang:1.27-alpine AS go-builder
 
 RUN apk add --no-cache git ca-certificates tzdata
 
@@ -45,7 +45,7 @@ RUN git clone https://github.com/telegramdesktop/tproxy-server.git /tmp/tproxy-s
     && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /build/tproxy-server ./cmd/tproxy-server
 
 # Final Runtime Image based on Debian Slim
-FROM public.ecr.aws/docker/library/debian:bookworm-slim
+FROM debian:bookworm-slim
 
 # nginx: mainline from nginx.org - Debian bookworm ships 1.22, and the https
 # server needs `http2 on;` (>=1.25.1). No QUIC: UDP 443 belongs to Hysteria2.

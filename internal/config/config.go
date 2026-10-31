@@ -202,8 +202,8 @@ const (
 	// Hysteria2 owns UDP 443 (the splitter is TCP-only); 8443 stays loopback.
 	Hysteria2Port = "443"
 	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.
-	Hysteria2HopPortsDefault = "20000:30000"
+	Hysteria2HopPortsDefault  = "20000:30000"
 	DefaultHysteria2Bandwidth = "500"
-	DefaultTelegramProxyPort = "8080"
-	DefaultFingerprint       = "firefox"
+	DefaultTelegramProxyPort  = "8080"
+	DefaultFingerprint        = "firefox"
 )

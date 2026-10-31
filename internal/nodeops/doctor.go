@@ -312,4 +312,3 @@ func checkSwap() Check {
 	}
 	return Check{Name: "swap", Pass: true, Detail: fmt.Sprintf("%d active swap partition(s)/file(s)", len(lines)-1)}
 }
-
