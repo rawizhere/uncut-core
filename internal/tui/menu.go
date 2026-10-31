@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -527,6 +529,7 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 						huh.NewOption("3. Renew TLS Certificate", "renew_cert"),
 						huh.NewOption("4. Export Database Backup", "backup"),
 						huh.NewOption("5. Import Database Backup", "import_backup"),
+						huh.NewOption("6. Set Hysteria 2 Bandwidth", "hysteria_bandwidth"),
 						huh.NewOption("0. Back", "back"),
 					).
 					Value(&mAction),
@@ -552,6 +555,8 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 			m.exportBackup()
 		case "import_backup":
 			m.importBackup(ctx)
+		case "hysteria_bandwidth":
+			m.setHysteriaBandwidth(ctx)
 		}
 	}
 }
@@ -692,3 +697,42 @@ func (m *Menu) subscriptionURL(subHash string) string {
 	// No settings, no URL: a built-in default would be a link that dies the moment the real transport loads.
 	return ""
 }
+
+func (m *Menu) setHysteriaBandwidth(ctx context.Context) {
+	curr := m.current()
+	upVal := cmp.Or(curr.Hysteria2UpMbps, "BBR (uncapped)")
+	downVal := cmp.Or(curr.Hysteria2DownMbps, "BBR (uncapped)")
+	fmt.Printf("\nCurrent bandwidth caps: up %s, down %s\n", upVal, downVal)
+	fmt.Println("Enter bandwidth in Mbps (0 clears back to BBR):")
+
+	var upStr, downStr string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().Title("Upload Mbps:").Value(&upStr),
+			huh.NewInput().Title("Download Mbps:").Value(&downStr),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return
+	}
+	up, err := strconv.Atoi(strings.TrimSpace(upStr))
+	if err != nil || up < 0 {
+		fmt.Println("Invalid upload bandwidth")
+		return
+	}
+	down, err := strconv.Atoi(strings.TrimSpace(downStr))
+	if err != nil || down < 0 {
+		fmt.Println("Invalid download bandwidth")
+		return
+	}
+	if err := nodeops.SetHysteria2Bandwidth(ctx, m.store, m.opts, up, down); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	if up == 0 && down == 0 {
+		fmt.Println("\nHysteria 2 bandwidth cleared, back to BBR.")
+	} else {
+		fmt.Printf("\nHysteria 2 bandwidth set: up %d Mbps, down %d Mbps.\n", up, down)
+	}
+}
+

@@ -44,6 +44,17 @@ sysctl -w net.netfilter.nf_conntrack_tcp_timeout_fin_wait=60 >/dev/null
 sysctl -w net.netfilter.nf_conntrack_tcp_timeout_close_wait=45 >/dev/null
 printf 'net.netfilter.nf_conntrack_max = 65536\nnet.ipv4.tcp_tw_reuse = 1\nnet.netfilter.nf_conntrack_tcp_timeout_time_wait = 30\nnet.netfilter.nf_conntrack_tcp_timeout_fin_wait = 60\nnet.netfilter.nf_conntrack_tcp_timeout_close_wait = 45\n' > /etc/sysctl.d/99-uncut-conntrack.conf
 
+echo "==> network tuning (bbr, udp and tcp socket buffers)"
+modprobe tcp_bbr 2>/dev/null || true
+sysctl -w net.core.rmem_max=16777216 >/dev/null
+sysctl -w net.core.wmem_max=16777216 >/dev/null
+sysctl -w net.core.default_qdisc=fq >/dev/null
+sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null
+sysctl -w "net.ipv4.tcp_rmem=4096 262144 16777216" >/dev/null
+sysctl -w "net.ipv4.tcp_wmem=4096 262144 16777216" >/dev/null
+sysctl -w vm.min_free_kbytes=32768 >/dev/null
+printf 'net.core.rmem_max = 16777216\nnet.core.wmem_max = 16777216\nnet.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\nnet.ipv4.tcp_rmem = 4096 262144 16777216\nnet.ipv4.tcp_wmem = 4096 262144 16777216\nvm.min_free_kbytes = 32768\n' > /etc/sysctl.d/99-uncut-network.conf
+
 echo "==> firewall"
 ufw --force reset >/dev/null
 rm -f /etc/ufw/*.rules.[0-9]*

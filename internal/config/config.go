@@ -16,10 +16,11 @@ type AppConfig struct {
 	Domain string
 	Email  string
 	// No default on purpose: unset TAG renders no tag token on labels.
-	Tag      string
-	Timezone string
-	Clients  string
-	LogLevel string
+	Tag       string
+	Timezone  string
+	Clients   string
+	LogLevel  string
+	Bandwidth string
 }
 
 // Version is a fallback for plain go build; images inject the tag with -ldflags -X.
@@ -28,12 +29,13 @@ var Version = "3.2.0"
 // LoadAppConfig reads the process environment; compose's env_file supplies deployments/.env.
 func LoadAppConfig() *AppConfig {
 	return &AppConfig{
-		Domain:   os.Getenv("DOMAIN"),
-		Email:    os.Getenv("EMAIL"),
-		Tag:      os.Getenv("TAG"),
-		Timezone: cmp.Or(os.Getenv("TZ"), "Europe/Moscow"),
-		Clients:  os.Getenv("CLIENTS"),
-		LogLevel: cmp.Or(os.Getenv("LOG_LEVEL"), "info"),
+		Domain:    os.Getenv("DOMAIN"),
+		Email:     os.Getenv("EMAIL"),
+		Tag:       os.Getenv("TAG"),
+		Timezone:  cmp.Or(os.Getenv("TZ"), "Europe/Moscow"),
+		Clients:   os.Getenv("CLIENTS"),
+		LogLevel:  cmp.Or(os.Getenv("LOG_LEVEL"), "info"),
+		Bandwidth: os.Getenv("BANDWIDTH"),
 	}
 }
 
@@ -201,6 +203,7 @@ const (
 	Hysteria2Port = "443"
 	// Hysteria2HopPortsDefault: the DNAT range install.sh sets up on the host.
 	Hysteria2HopPortsDefault = "20000:30000"
+	DefaultHysteria2Bandwidth = "500"
 	DefaultTelegramProxyPort = "8080"
 	DefaultFingerprint       = "firefox"
 )

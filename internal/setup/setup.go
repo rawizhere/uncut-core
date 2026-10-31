@@ -78,8 +78,11 @@ func Bootstrap(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts
 		}
 	}
 
+	defaultBW := cmp.Or(cfg.Bandwidth, config.DefaultHysteria2Bandwidth)
 	for key, fallback := range map[string]string{
 		"hysteria2_hop_ports": config.Hysteria2HopPortsDefault,
+		"hysteria2_up_mbps":   defaultBW,
+		"hysteria2_down_mbps": defaultBW,
 		"protocols":           strings.Join(config.DefaultProtocolNames(), ","),
 		"fingerprint":         config.DefaultFingerprint,
 	} {
@@ -374,8 +377,8 @@ func ensureRealityKeys(store *db.Store) (bool, error) {
 }
 
 func setting(store *db.Store, key, fallback string) (string, error) {
-	if value := get(store, key); value != "" {
-		return value, nil
+	if val, err := store.GetSetting(key); err == nil {
+		return val, nil
 	}
 	if fallback == "" {
 		return "", fmt.Errorf("setting %q is not configured", key)

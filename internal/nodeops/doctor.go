@@ -41,6 +41,9 @@ func Doctor(ctx context.Context, store *db.Store, opts setup.Options) []Check {
 	checks = append(checks, checkTransports(settings)...)
 	checks = append(checks, checkBridge(ctx, settings))
 	checks = append(checks, checkSubscriptions(store, opts))
+	checks = append(checks, checkKernelNetwork()...)
+	checks = append(checks, checkHysteriaBandwidth(settings))
+	checks = append(checks, checkSwap())
 
 	return checks
 }
@@ -223,3 +226,90 @@ func udpListens(port string) bool {
 	}
 	return false
 }
+
+// checkKernelNetwork reads the socket-buffer and congestion sysctls host.sh sets; a skipped read (no /proc) is not a failure.
+func checkKernelNetwork() []Check {
+	var checks []Check
+
+	for _, buf := range []struct {
+		name, path string
+	}{{"kernel rmem_max", "/proc/sys/net/core/rmem_max"}, {"kernel wmem_max", "/proc/sys/net/core/wmem_max"}} {
+		data, err := os.ReadFile(buf.path)
+		if err != nil {
+			continue
+		}
+		val, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+		mb := val / 1048576
+		if val < 8388608 {
+			checks = append(checks, Check{
+				Name:   buf.name,
+				Pass:   false,
+				Detail: fmt.Sprintf("%d bytes (%d MB); below 8 MB the UDP socket buffer drops packets under load", val, mb),
+				Fix:    "run deployments/host.sh on host or set sysctl net.core." + strings.TrimPrefix(buf.name, "kernel ") + "=16777216",
+			})
+			continue
+		}
+		checks = append(checks, Check{
+			Name:   buf.name,
+			Pass:   true,
+			Detail: fmt.Sprintf("%d bytes (%d MB)", val, mb),
+		})
+	}
+
+	ccData, err := os.ReadFile("/proc/sys/net/ipv4/tcp_congestion_control")
+	if err == nil {
+		cc := strings.TrimSpace(string(ccData))
+		if cc != "bbr" {
+			checks = append(checks, Check{
+				Name:   "tcp congestion",
+				Pass:   false,
+				Detail: cc + " (bbr recommended for VPN throughput)",
+				Fix:    "run deployments/host.sh on host or set sysctl net.ipv4.tcp_congestion_control=bbr",
+			})
+		} else {
+			checks = append(checks, Check{
+				Name:   "tcp congestion",
+				Pass:   true,
+				Detail: "bbr",
+			})
+		}
+	}
+
+	return checks
+}
+
+func checkHysteriaBandwidth(settings config.Settings) Check {
+	if !slices.Contains(settings.Protocols, string(config.ProtoHysteria2)) {
+		return Check{Name: "hysteria2 bandwidth", Pass: true, Detail: "hysteria2 disabled"}
+	}
+	if settings.Hysteria2UpMbps != "" && settings.Hysteria2DownMbps != "" {
+		return Check{
+			Name:   "hysteria2 bandwidth",
+			Pass:   true,
+			Detail: fmt.Sprintf("brutal caps: up %s Mbps, down %s Mbps", settings.Hysteria2UpMbps, settings.Hysteria2DownMbps),
+		}
+	}
+	return Check{
+		Name:   "hysteria2 bandwidth",
+		Pass:   true,
+		Detail: "uncapped (BBR fallback)",
+	}
+}
+
+func checkSwap() Check {
+	data, err := os.ReadFile("/proc/swaps")
+	if err != nil {
+		return Check{Name: "swap", Pass: false, Detail: err.Error()}
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) <= 1 {
+		return Check{
+			Name:   "swap",
+			Pass:   false,
+			Detail: "no swap configured",
+			Fix:    "add a 1-2GB swap file on host to prevent OOM killer on low-RAM VPS",
+		}
+	}
+	return Check{Name: "swap", Pass: true, Detail: fmt.Sprintf("%d active swap partition(s)/file(s)", len(lines)-1)}
+}
+

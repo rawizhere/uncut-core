@@ -139,6 +139,7 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 var serverTemplate = template.Must(template.New("uncut").Parse(`{{if .XHTTP}}upstream xhttp_backend {
     server 127.0.0.1:{{.Ports.XHTTP}};
     keepalive 64;
+    keepalive_requests 10000;
 }
 
 {{end}}map $http_upgrade $connection_upgrade {

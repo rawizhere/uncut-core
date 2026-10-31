@@ -10,9 +10,10 @@ DOMAIN=
 EMAIL=
 TAG=de
 TZ=Europe/Moscow
+BANDWIDTH=500
 
 usage() {
-	echo "usage: install.sh --domain FQDN --email ADDR [--tag TAG] [--tz ZONE] [--ref REF] [--image IMAGE] [--dir DIR]" >&2
+	echo "usage: install.sh --domain FQDN --email ADDR [--bandwidth MBPS] [--tag TAG] [--tz ZONE] [--ref REF] [--image IMAGE] [--dir DIR]" >&2
 	exit 2
 }
 
@@ -20,6 +21,7 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--domain) DOMAIN=$2; shift 2 ;;
 	--email) EMAIL=$2; shift 2 ;;
+	--bandwidth) BANDWIDTH=$2; shift 2 ;;
 	--tag) TAG=$2; shift 2 ;;
 	--tz) TZ=$2; shift 2 ;;
 	--ref) REF=$2; shift 2 ;;
@@ -81,6 +83,7 @@ ENVFILE="$SRC/deployments/.env"
 	echo "EMAIL=$EMAIL"
 	echo "TAG=$TAG"
 	echo "TZ=$TZ"
+	echo "BANDWIDTH=$BANDWIDTH"
 	echo "LOG_LEVEL=info"
 } > "$ENVFILE"
 
