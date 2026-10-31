@@ -83,6 +83,7 @@ func main() {
 	rootCmd.AddCommand(breaking(setSNICmd()))
 	rootCmd.AddCommand(setCertCmd())
 	rootCmd.AddCommand(hysteria2BandwidthCmd())
+	rootCmd.AddCommand(breaking(setAwgPortCmd()))
 
 	err := rootCmd.Execute()
 	// Closed here, not in a post-run: cobra skips post-runs when RunE fails.
@@ -516,6 +517,42 @@ func hysteria2BandwidthCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func setAwgPortCmd() *cobra.Command {
+	var port int
+	cmd := &cobra.Command{
+		Use:   "set-awg-port [port]",
+		Short: "Set the AmneziaWG UDP listen port; 0 resets to the default 45820",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				if cmd.Flags().Changed("port") {
+					return fmt.Errorf("give the port either as an argument or with --port, not both")
+				}
+				pos, err := strconv.Atoi(args[0])
+				if err != nil {
+					return fmt.Errorf("port: %w", err)
+				}
+				port = pos
+			} else if !cmd.Flags().Changed("port") {
+				return fmt.Errorf("port is required: pass it as an argument or with --port; 0 resets to the default 45820")
+			}
+			if err := nodeops.SetAmneziaWGPort(cmd.Context(), store, opts, port); err != nil {
+				return err
+			}
+			if port == 0 {
+				fmt.Printf("AmneziaWG port reset to the default %d; configs rebuilt\n", config.DefaultAmneziaWGPort)
+				return nil
+			}
+			fmt.Printf("AmneziaWG port set to %d; configs rebuilt\n", port)
+			fmt.Printf("Open it on the host: AWGPORT=%d deployments/host.sh\n", port)
+			fmt.Println("wireguard:// links already issued carry the old port and must be re-issued.")
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&port, "port", 0, "UDP port, 1..65535 (0 = default 45820)")
+	return cmd
 }
 
 func rotatePathsCmd() *cobra.Command {

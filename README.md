@@ -1,8 +1,9 @@
 # uncut-core
 
 Stealth VPN node in one container: a relay core behind nginx on a single
-host, several transports sharing TCP 443, a Telegram proxy bridge, client
-subscriptions and self-renewing TLS.
+host, several transports sharing TCP 443, an AmneziaWG (wireguard) endpoint
+on its own UDP port, a Telegram proxy bridge, client subscriptions and
+self-renewing TLS.
 
 Handing this repository to an agent? Point it at AGENTS.md first.
 
@@ -11,14 +12,15 @@ SQLite file on the box and everything is driven from `raw` on that box.
 
 ## How it fits together
 
-The firewall opens `80`, `443/tcp` and `443/udp` (plus SSH); everything
-else below is loopback-only:
+The firewall opens `80`, `443/tcp`, `443/udp` and the AmneziaWG UDP port
+`45820` (plus SSH); everything else below is loopback-only:
 
 | Port | Owner | What |
 |------|-------|------|
 | 80/tcp | nginx | ACME HTTP-01 challenge; everything else `301` to https |
 | 443/tcp | nginx `stream` | split by TLS SNI |
 | 443/udp | sing-box | UDP relay |
+| 45820/udp | sing-box | AmneziaWG (wireguard) relay; the default port, change with `raw set-awg-port` |
 | 8443/tcp | sing-box | TLS relay inbound; reachable only through the 443 SNI split |
 
 nginx has to sit in front because sing-box cannot demultiplex one TCP port
@@ -97,13 +99,14 @@ raw info              # version, tag, DoH endpoint, transport revision, cert exp
 raw doctor            # health checks: daemon, configs, dns, ports, cert, transports, tg bridge, subscriptions
 raw rotate-paths --yes      # re-generate random paths; re-issue subscriptions
 raw change-domain node2.example.com --yes   # new domain + a fresh certificate
+raw set-awg-port 51820 --yes  # new AmneziaWG UDP port; every issued wireguard:// link dies
 raw sync-ip [--force <ip>]                  # pin the detected public IP
 ```
 
 Every command takes `--data-dir` and `--install-dir`; `info`, `list`, `add`
 and `doctor` also take `--json`. Commands that kill issued client links
 (`del`, `rotate-sub`, `rotate-paths`, `change-domain`, `set-sni`,
-`set-mtproto-tls`) refuse to run without `--yes`.
+`set-mtproto-tls`, `set-awg-port`) refuse to run without `--yes`.
 
 Commands only change the SQLite store and ask the daemon (`POST
 127.0.0.1:8088/reload`) to re-render. The daemon checks each config with its

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/rawizhere/uncut-core/internal/config"
@@ -118,6 +119,32 @@ func GenerateVLESSGRPCLink(client config.Client, s config.Settings) string {
 	)
 }
 
+// GenerateAmneziaWGLink renders the mihomo wireguard share link with the Amnezia 3.1 obfuscation params; a client without its private key (a peer seeded from outside) gets no link, since a half-known key builds a dead tunnel.
+func GenerateAmneziaWGLink(client config.Client, s config.Settings) string {
+	a := client.AWG
+	if a == nil || a.PrivKey == "" {
+		return ""
+	}
+	q := url.Values{}
+	q.Set("address", a.IP)
+	q.Set("publickey", s.AmneziaWGPubKey)
+	if a.PSK != "" {
+		q.Set("presharedkey", a.PSK)
+	}
+	q.Set("mtu", strconv.Itoa(config.AmneziaWGMTU))
+	q.Set("header_protection_key", s.AmneziaWGHeaderKey)
+	q.Set("content_padding_addition", config.AmneziaWGPadding)
+	for k, v := range map[string]int{
+		"jc": config.AmneziaWGJc, "jmin": config.AmneziaWGJmin, "jmax": config.AmneziaWGJmax,
+		"s1": config.AmneziaWGS1, "s2": config.AmneziaWGS2, "s3": config.AmneziaWGS3, "s4": config.AmneziaWGS4,
+		"h1": config.AmneziaWGH1, "h2": config.AmneziaWGH2, "h3": config.AmneziaWGH3, "h4": config.AmneziaWGH4,
+	} {
+		q.Set(k, strconv.Itoa(v))
+	}
+	return fmt.Sprintf("wireguard://%s@%s:%d?%s#%s",
+		url.QueryEscape(a.PrivKey), s.Domain, s.AmneziaWGPort(), q.Encode(), linkLabel(client.Name, "amneziawg", s.Tag))
+}
+
 func GenerateClientLinks(client config.Client, s config.Settings) []string {
 	links := make([]string, 0)
 	for _, proto := range config.EffectiveProtocols(client, s.Protocols) {
@@ -135,8 +162,12 @@ func GenerateClientLinks(client config.Client, s config.Settings) []string {
 			link = GenerateVLESSHTTPUpgradeLink(client, s)
 		case config.ProtoVLESSGRPC:
 			link = GenerateVLESSGRPCLink(client, s)
+		case config.ProtoAmneziaWG:
+			link = GenerateAmneziaWGLink(client, s)
 		}
-		links = append(links, link)
+		if link != "" {
+			links = append(links, link)
+		}
 	}
 	return links
 }

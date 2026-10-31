@@ -345,6 +345,8 @@ func (m *Menu) manageProtocols(ctx context.Context) {
 			label = "VLESS HTTPUpgrade (:443 TCP via Nginx)"
 		case config.ProtoVLESSGRPC:
 			label = "VLESS gRPC (:443 TCP via Nginx)"
+		case config.ProtoAmneziaWG:
+			label = fmt.Sprintf("AmneziaWG (UDP %d)", m.current().AmneziaWGPort())
 		}
 		options = append(options, huh.NewOption(label, string(p)))
 	}
@@ -530,6 +532,7 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 						huh.NewOption("4. Export Database Backup", "backup"),
 						huh.NewOption("5. Import Database Backup", "import_backup"),
 						huh.NewOption("6. Set Hysteria 2 Bandwidth", "hysteria_bandwidth"),
+						huh.NewOption("7. Set AmneziaWG Port", "awg_port"),
 						huh.NewOption("0. Back", "back"),
 					).
 					Value(&mAction),
@@ -557,6 +560,8 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 			m.importBackup(ctx)
 		case "hysteria_bandwidth":
 			m.setHysteriaBandwidth(ctx)
+		case "awg_port":
+			m.setAmneziaWGPort(ctx)
 		}
 	}
 }
@@ -734,4 +739,48 @@ func (m *Menu) setHysteriaBandwidth(ctx context.Context) {
 	} else {
 		fmt.Printf("\nHysteria 2 bandwidth set: up %d Mbps, down %d Mbps.\n", up, down)
 	}
+}
+
+func (m *Menu) setAmneziaWGPort(ctx context.Context) {
+	current := m.current().AmneziaWGPort()
+	fmt.Printf("\nCurrent AmneziaWG port: %d (default %d)\n", current, config.DefaultAmneziaWGPort)
+
+	var portStr string
+	form := huh.NewInput().Title("New UDP port (0 resets to the default):").Value(&portStr)
+	if err := form.Run(); err != nil {
+		return
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(portStr))
+	if err != nil || port < 0 || port > 65535 {
+		fmt.Println("Invalid port")
+		return
+	}
+
+	target := port
+	if port == 0 {
+		target = config.DefaultAmneziaWGPort
+	}
+	var confirm bool
+	cForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Change the AmneziaWG UDP port to %d? Every issued wireguard:// link carries the old port and dies.", target)).
+				Value(&confirm),
+		),
+	)
+	if err := cForm.Run(); err != nil || !confirm {
+		return
+	}
+
+	if err := nodeops.SetAmneziaWGPort(ctx, m.store, m.opts, port); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	if port == 0 {
+		fmt.Printf("\nAmneziaWG port reset to the default %d; configs rebuilt.\n", config.DefaultAmneziaWGPort)
+		return
+	}
+	fmt.Printf("\nAmneziaWG port set to %d; configs rebuilt.\n", port)
+	fmt.Printf("Open it on the host: AWGPORT=%d deployments/host.sh\n", port)
+	fmt.Println("wireguard:// links already issued carry the old port and must be re-issued.")
 }

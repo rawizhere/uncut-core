@@ -59,6 +59,7 @@ const (
 	ProtoVLESSGRPC        InboundProtocol = "vless-grpc"
 	ProtoVLESSReality     InboundProtocol = "vless-reality"
 	ProtoHysteria2        InboundProtocol = "hysteria2"
+	ProtoAmneziaWG        InboundProtocol = "amneziawg"
 )
 
 // Ports are the fixed loopback listeners behind the 443 split, named once for sing-box, nginx, the daemon and doctor.
@@ -98,6 +99,7 @@ var DefaultProtocols = []InboundProtocol{
 	ProtoVLESSGRPC,
 	ProtoVLESSReality,
 	ProtoHysteria2,
+	ProtoAmneziaWG,
 }
 
 func isValidProtocol(p string) bool {
@@ -164,6 +166,16 @@ type Client struct {
 	ProtocolsExplicit bool      `json:"protocols_explicit,omitempty"`
 	Protocols         []string  `json:"protocols"`
 	CreatedAt         time.Time `json:"created_at"`
+	// AWG is the AmneziaWG peer material; nil until the node's bootstrap backfills it.
+	AWG *ClientAWG `json:"awg,omitempty"`
+}
+
+// ClientAWG is the per-client AmneziaWG peer material; the private key exists only to render the client's own link.
+type ClientAWG struct {
+	PrivKey string `json:"priv_key"`
+	PubKey  string `json:"pub_key"`
+	PSK     string `json:"psk"`
+	IP      string `json:"ip"`
 }
 
 type Settings struct {
@@ -192,8 +204,38 @@ type Settings struct {
 	// Fingerprint is the uTLS fingerprint clients put in their ClientHello; a client-side parameter, the server never sees it.
 	Fingerprint string `json:"fingerprint,omitempty"`
 	// MTProtoTLSDomain is the optional third-party domain for the FakeTLS branch. Empty means the branch is off.
-	MTProtoTLSDomain string               `json:"mtproto_tls_domain,omitempty"`
-	Transport        *transport.Transport `json:"transport,omitempty"`
+	MTProtoTLSDomain string `json:"mtproto_tls_domain,omitempty"`
+	// AmneziaWG server keys: the tunnel curve25519 pair and the 3.x header protection key.
+	AmneziaWGPrivKey   string `json:"awg_priv_key,omitempty"`
+	AmneziaWGPubKey    string `json:"awg_pub_key,omitempty"`
+	AmneziaWGHeaderKey string `json:"awg_header_key,omitempty"`
+	// AWGPort is the stored awg_port setting; 0 means the default listen port.
+	AWGPort   int                  `json:"awg_port,omitempty"`
+	Transport *transport.Transport `json:"transport,omitempty"`
+}
+
+// AmneziaWGPort resolves the UDP listen port: the stored awg_port or the default.
+func (s Settings) AmneziaWGPort() int {
+	if s.AWGPort > 0 {
+		return s.AWGPort
+	}
+	return DefaultAmneziaWGPort
+}
+
+// ValidateAWGPort rejects ports the node or the host layer already owns: the TCP 443 split, Hysteria2's UDP 443, its hop DNAT and the loopback listeners.
+func ValidateAWGPort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port must be 1..65535")
+	}
+	for _, taken := range []int{80, 443, 2398, 2399} {
+		if port == taken {
+			return fmt.Errorf("port %d is already owned by the node", port)
+		}
+	}
+	if port >= 20000 && port <= 30000 {
+		return fmt.Errorf("port %d falls into the Hysteria2 hop range 20000:30000, whose DNAT sends it to UDP 443", port)
+	}
+	return nil
 }
 
 const (
@@ -206,4 +248,22 @@ const (
 	DefaultHysteria2Bandwidth = "500"
 	DefaultTelegramProxyPort  = "8080"
 	DefaultFingerprint        = "firefox"
+
+	// DefaultAmneziaWGPort owns plain UDP when awg_port is unset: outside the Hysteria2 hop range and clear of 80/443/2398.
+	DefaultAmneziaWGPort = 45820
+	AmneziaWGServerAddr  = "10.8.0.1/24"
+	AmneziaWGMTU         = 1280
+	// AmneziaWG 3.1 obfuscation set, fixed fleet-wide so every issued link matches the server; all s* values stay >= 12.
+	AmneziaWGPadding = "16-128"
+	AmneziaWGS1      = 56
+	AmneziaWGS2      = 48
+	AmneziaWGS3      = 32
+	AmneziaWGS4      = 24
+	AmneziaWGH1      = 1
+	AmneziaWGH2      = 2
+	AmneziaWGH3      = 3
+	AmneziaWGH4      = 4
+	AmneziaWGJc      = 4
+	AmneziaWGJmin    = 40
+	AmneziaWGJmax    = 70
 )

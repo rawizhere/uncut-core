@@ -67,6 +67,15 @@ func AddClient(store *db.Store, name string, protocols []string) (*config.Client
 		}
 	}
 
+	awgIP, err := nextAWGAddress(usedAWGAddresses(clients))
+	if err != nil {
+		return nil, err
+	}
+	awgPriv, awgPub, err := randomWGKeyPair()
+	if err != nil {
+		return nil, err
+	}
+
 	clientUUID := GenerateUUID()
 	client := config.Client{
 		UUID:              clientUUID,
@@ -76,6 +85,7 @@ func AddClient(store *db.Store, name string, protocols []string) (*config.Client
 		ProtocolsExplicit: explicit,
 		Protocols:         protos,
 		CreatedAt:         time.Now().UTC(),
+		AWG:               &config.ClientAWG{PrivKey: awgPriv, PubKey: awgPub, PSK: RandomAWGSecret(), IP: awgIP},
 	}
 
 	if err := store.AddClient(client); err != nil {
@@ -136,6 +146,16 @@ func UpdateClientProtocols(store *db.Store, clientUUID string, protocols []strin
 
 	slog.Info("Client protocols updated", "name", client.Name, "uuid", clientUUID, "protocols", protos)
 	return client, nil
+}
+
+func usedAWGAddresses(clients []config.Client) map[string]bool {
+	used := make(map[string]bool, len(clients))
+	for _, c := range clients {
+		if c.AWG != nil && c.AWG.IP != "" {
+			used[c.AWG.IP] = true
+		}
+	}
+	return used
 }
 
 // InheritClientProtocols resets to snapshot semantics: the stored list clears, the server's set flows.

@@ -16,8 +16,9 @@ import (
 
 func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, error) {
 	inbounds := make([]map[string]any, 0)
+	protos := config.ResolveProtocols(settings.Protocols)
 
-	for _, proto := range config.ResolveProtocols(settings.Protocols) {
+	for _, proto := range protos {
 		inbound, err := generateInbound(proto, settings, clients)
 		if err != nil {
 			return nil, fmt.Errorf("generate inbound for %s: %w", proto, err)
@@ -30,11 +31,60 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 		inbounds = append(inbounds, mtproxyInbound(settings))
 	}
 
-	return json.MarshalIndent(map[string]any{
+	out := map[string]any{
 		"log":       map[string]any{"level": "info", "timestamp": true},
 		"inbounds":  inbounds,
 		"outbounds": []map[string]string{{"type": "direct", "tag": "direct"}},
-	}, "", "  ")
+	}
+	if slices.Contains(protos, string(config.ProtoAmneziaWG)) {
+		out["endpoints"] = []map[string]any{amneziaWGEndpoint(settings, clients)}
+		out["route"] = map[string]any{"rules": []map[string]string{{"inbound": "amneziawg-in", "outbound": "direct"}}}
+	}
+
+	return json.MarshalIndent(out, "", "  ")
+}
+
+// amneziaWGEndpoint renders the AmneziaWG tunnel as a wireguard endpoint whose peers are the clients with the protocol on.
+func amneziaWGEndpoint(settings config.Settings, clients []config.Client) map[string]any {
+	peers := make([]map[string]any, 0)
+	for _, c := range clients {
+		if c.UUID == "" || c.AWG == nil || c.AWG.PubKey == "" || c.AWG.IP == "" {
+			continue
+		}
+		if !slices.Contains(config.EffectiveProtocols(c, settings.Protocols), string(config.ProtoAmneziaWG)) {
+			continue
+		}
+		peers = append(peers, map[string]any{
+			"public_key":     c.AWG.PubKey,
+			"allowed_ips":    []string{c.AWG.IP},
+			"pre_shared_key": c.AWG.PSK,
+		})
+	}
+
+	return map[string]any{
+		"type":        "wireguard",
+		"tag":         "amneziawg-in",
+		"listen_port": settings.AmneziaWGPort(),
+		"address":     []string{config.AmneziaWGServerAddr},
+		"mtu":         config.AmneziaWGMTU,
+		"private_key": settings.AmneziaWGPrivKey,
+		"peers":       peers,
+		"amnezia": map[string]any{
+			"header_protection_key":    settings.AmneziaWGHeaderKey,
+			"content_padding_addition": config.AmneziaWGPadding,
+			"jc":                       config.AmneziaWGJc,
+			"jmin":                     config.AmneziaWGJmin,
+			"jmax":                     config.AmneziaWGJmax,
+			"s1":                       config.AmneziaWGS1,
+			"s2":                       config.AmneziaWGS2,
+			"s3":                       config.AmneziaWGS3,
+			"s4":                       config.AmneziaWGS4,
+			"h1":                       config.AmneziaWGH1,
+			"h2":                       config.AmneziaWGH2,
+			"h3":                       config.AmneziaWGH3,
+			"h4":                       config.AmneziaWGH4,
+		},
+	}
 }
 
 // allowedUsers renders every client whose effective set holds proto — the same rule the subscription links follow.

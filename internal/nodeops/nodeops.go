@@ -460,6 +460,24 @@ func SetHysteria2Bandwidth(ctx context.Context, store *db.Store, opts setup.Opti
 	return nil
 }
 
+// SetAmneziaWGPort stores the UDP listen port; 0 clears back to the default. The port is not a transport path, so subscriptions re-render but the rev holds.
+func SetAmneziaWGPort(ctx context.Context, store *db.Store, opts setup.Options, port int) error {
+	value := ""
+	if port != 0 {
+		if err := config.ValidateAWGPort(port); err != nil {
+			return err
+		}
+		value = strconv.Itoa(port)
+	}
+	if err := store.SetSetting("awg_port", value); err != nil {
+		return fmt.Errorf("save awg port: %w", err)
+	}
+	if err := setup.Reload(ctx); err != nil {
+		return fmt.Errorf("rebuild configs: %w", err)
+	}
+	return nil
+}
+
 // SetCert installs a custom certificate after checking the key matches it and it covers the node domain, then has the daemon reload nginx and sing-box.
 func SetCert(ctx context.Context, store *db.Store, opts setup.Options, certData, keyData []byte) (string, error) {
 	settings, err := setup.Load(store, opts)

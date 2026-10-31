@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +69,10 @@ func Bootstrap(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts
 		return config.Settings{}, err
 	}
 
+	if err := core.EnsureAWGServerKeys(store); err != nil {
+		return config.Settings{}, err
+	}
+
 	// Node secrets: hex of n random bytes, generated once.
 	for key, n := range map[string]int{"reality_short_id": 8, "mtproto_raw_secret": 16, "webproxy_secret": 16, "hysteria2_obfs": 16} {
 		if get(store, key) != "" {
@@ -109,6 +114,11 @@ func Bootstrap(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts
 		}
 	}
 
+	// AmneziaWG peer material for clients created before the protocol existed.
+	if err := core.BackfillClientAWG(store); err != nil {
+		return config.Settings{}, err
+	}
+
 	// Seed clients on the first init only: a node whose operator deleted every client must not grow admin back on restart.
 	if fresh {
 		clientNames := cfg.Clients
@@ -132,25 +142,31 @@ func Bootstrap(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts
 func Load(store *db.Store, opts Options) (config.Settings, error) {
 	var err error
 	settings := config.Settings{
-		InstallDir:        opts.InstallDir,
-		SubsDir:           opts.SubsDir,
-		LogDir:            opts.LogDir,
-		Protocols:         splitList(get(store, "protocols")),
-		Domain:            get(store, "domain"),
-		IP:                get(store, "server_ip"),
-		Tag:               get(store, "tag"),
-		Email:             get(store, "email"),
-		RealityPrivKey:    get(store, "reality_private_key"),
-		RealityPubKey:     get(store, "reality_public_key"),
-		RealityShortID:    get(store, "reality_short_id"),
-		Hysteria2Obfs:     get(store, "hysteria2_obfs"),
-		Hysteria2HopPorts: get(store, "hysteria2_hop_ports"),
-		Hysteria2UpMbps:   get(store, "hysteria2_up_mbps"),
-		Hysteria2DownMbps: get(store, "hysteria2_down_mbps"),
-		Fingerprint:       cmp.Or(get(store, "fingerprint"), config.DefaultFingerprint),
-		MTProtoRawSecret:  get(store, "mtproto_raw_secret"),
-		WebProxySecret:    get(store, "webproxy_secret"),
-		MTProtoTLSDomain:  get(store, "mtproto_tls_domain"),
+		InstallDir:         opts.InstallDir,
+		SubsDir:            opts.SubsDir,
+		LogDir:             opts.LogDir,
+		Protocols:          splitList(get(store, "protocols")),
+		Domain:             get(store, "domain"),
+		IP:                 get(store, "server_ip"),
+		Tag:                get(store, "tag"),
+		Email:              get(store, "email"),
+		RealityPrivKey:     get(store, "reality_private_key"),
+		RealityPubKey:      get(store, "reality_public_key"),
+		RealityShortID:     get(store, "reality_short_id"),
+		Hysteria2Obfs:      get(store, "hysteria2_obfs"),
+		Hysteria2HopPorts:  get(store, "hysteria2_hop_ports"),
+		Hysteria2UpMbps:    get(store, "hysteria2_up_mbps"),
+		Hysteria2DownMbps:  get(store, "hysteria2_down_mbps"),
+		Fingerprint:        cmp.Or(get(store, "fingerprint"), config.DefaultFingerprint),
+		MTProtoRawSecret:   get(store, "mtproto_raw_secret"),
+		WebProxySecret:     get(store, "webproxy_secret"),
+		MTProtoTLSDomain:   get(store, "mtproto_tls_domain"),
+		AmneziaWGPrivKey:   get(store, "awg_private_key"),
+		AmneziaWGPubKey:    get(store, "awg_public_key"),
+		AmneziaWGHeaderKey: get(store, "awg_header_protection_key"),
+	}
+	if p, err := strconv.Atoi(get(store, "awg_port")); err == nil {
+		settings.AWGPort = p
 	}
 
 	settings.Transport, err = loadTransport(store)

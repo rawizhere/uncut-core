@@ -5,6 +5,7 @@ set -eu
 REF=${REF:-main}
 RAW=https://raw.githubusercontent.com/rawizhere/uncut-core/$REF/deployments
 HOP=20000:30000
+AWGPORT=${AWGPORT:-45820}
 LOGS=/opt/uncut/data/logs/nginx
 
 if [ "$(id -u)" != 0 ]; then
@@ -60,7 +61,7 @@ ufw --force reset >/dev/null
 rm -f /etc/ufw/*.rules.[0-9]*
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
-for rule in "$SSH_PORT/tcp" 80/tcp 443/tcp 443/udp "$HOP/udp"; do
+for rule in "$SSH_PORT/tcp" 80/tcp 443/tcp 443/udp "$AWGPORT/udp" "$HOP/udp"; do
 	ufw allow "$rule" >/dev/null
 done
 ufw --force enable >/dev/null
@@ -102,4 +103,4 @@ fi
 systemctl enable fail2ban >/dev/null 2>&1
 systemctl restart fail2ban
 
-echo "host layer applied: ufw allows $SSH_PORT/tcp 80/tcp 443/tcp 443/udp $HOP/udp"
+echo "host layer applied: ufw allows $SSH_PORT/tcp 80/tcp 443/tcp 443/udp $AWGPORT/udp $HOP/udp"

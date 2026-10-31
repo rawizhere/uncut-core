@@ -39,7 +39,7 @@ Then, in order:
     # 3. Verify, stop at the first failure:
     docker ps --format '{{.Names}} {{.Status}}'   # uncut-node, healthy
     docker exec uncut-node raw doctor             # all PASS
-    ufw status                                    # ssh, 80/tcp, 443/tcp, 443/udp, 20000:30000/udp
+    ufw status                                    # ssh, 80/tcp, 443/tcp, 443/udp, 45820/udp, 20000:30000/udp
     fail2ban-client status                        # sshd + uncut-dos + uncut-honeypot
 
 `raw doctor` (`--json` for a machine-readable list) covers the daemon,
@@ -79,5 +79,6 @@ explicit operator request:
 
 - `raw rotate-paths` — all transports, every link dies.
 - `raw change-domain` — new domain plus a fresh certificate.
+- `raw set-awg-port` — new AmneziaWG UDP port, every issued wireguard:// link dies.
 - `raw del`, `raw rotate-sub` — one client.
 - Reality SNI change, MTProto FakeTLS mask change.

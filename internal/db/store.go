@@ -46,6 +46,8 @@ DELETE FROM settings WHERE key = 'country';
 	`ALTER TABLE clients ADD COLUMN protocols_explicit INTEGER NOT NULL DEFAULT 0`,
 	// v4 backfills the subscription token of pre-token rows, which the render path used to write on the fly.
 	`UPDATE clients SET sub_hash = lower(hex(randomblob(16))) WHERE sub_hash IS NULL OR sub_hash = ''`,
+	// v5 stores the AmneziaWG peer material (curve25519 pair, preshared key, tunnel address) as one JSON blob.
+	`ALTER TABLE clients ADD COLUMN awg TEXT NOT NULL DEFAULT ''`,
 }
 
 // New opens the node database: WAL, 5s busy timeout, one pinned connection, 0600, migrated.
@@ -192,17 +194,20 @@ func (s *Store) SetSettings(kv map[string]string) error {
 	return tx.Commit()
 }
 
-const clientColumns = `uuid, name, password, sub_hash, protocols, protocols_explicit, created_at`
+const clientColumns = `uuid, name, password, sub_hash, protocols, protocols_explicit, awg, created_at`
 
 func scanClient(row interface{ Scan(...any) error }) (config.Client, error) {
 	var c config.Client
-	var protosJSON string
+	var protosJSON, awgJSON string
 	var createdAt any
-	if err := row.Scan(&c.UUID, &c.Name, &c.Password, &c.SubHash, &protosJSON, &c.ProtocolsExplicit, &createdAt); err != nil {
+	if err := row.Scan(&c.UUID, &c.Name, &c.Password, &c.SubHash, &protosJSON, &c.ProtocolsExplicit, &awgJSON, &createdAt); err != nil {
 		return c, err
 	}
 	if protosJSON != "" {
 		_ = json.Unmarshal([]byte(protosJSON), &c.Protocols)
+	}
+	if awgJSON != "" {
+		_ = json.Unmarshal([]byte(awgJSON), &c.AWG)
 	}
 	if c.Protocols == nil {
 		c.Protocols = []string{}
@@ -252,18 +257,23 @@ func (s *Store) AddClient(client config.Client) error {
 	if err != nil {
 		return fmt.Errorf("marshal client protocols: %w", err)
 	}
+	awgBytes, err := json.Marshal(client.AWG)
+	if err != nil {
+		return fmt.Errorf("marshal client awg: %w", err)
+	}
 
 	query := `INSERT INTO clients (` + clientColumns + `)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			name = excluded.name,
 			password = excluded.password,
 			sub_hash = excluded.sub_hash,
 			protocols = excluded.protocols,
 			protocols_explicit = excluded.protocols_explicit,
+			awg = excluded.awg,
 			created_at = excluded.created_at`
 
-	_, err = s.db.Exec(query, client.UUID, client.Name, client.Password, client.SubHash, string(protosBytes), client.ProtocolsExplicit, client.CreatedAt.Format(time.RFC3339))
+	_, err = s.db.Exec(query, client.UUID, client.Name, client.Password, client.SubHash, string(protosBytes), client.ProtocolsExplicit, string(awgBytes), client.CreatedAt.Format(time.RFC3339))
 	return err
 }
 

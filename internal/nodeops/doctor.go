@@ -168,6 +168,14 @@ func checkTransports(settings config.Settings) []Check {
 	if slices.Contains(settings.Protocols, string(config.ProtoHysteria2)) && !udpListens(config.Hysteria2Port) {
 		checks = append(checks, Check{Name: "transport hysteria2", Pass: false, Detail: "udp " + config.Hysteria2Port + " not listening", Fix: "check sing-box logs"})
 	}
+	awgPort := strconv.Itoa(settings.AmneziaWGPort())
+	if slices.Contains(settings.Protocols, string(config.ProtoAmneziaWG)) {
+		if udpListens(awgPort) {
+			checks = append(checks, Check{Name: "transport amneziawg", Pass: true, Detail: "udp " + awgPort + " listening"})
+		} else {
+			checks = append(checks, Check{Name: "transport amneziawg", Pass: false, Detail: "udp " + awgPort + " not listening", Fix: "check sing-box logs"})
+		}
+	}
 	return checks
 }
 
