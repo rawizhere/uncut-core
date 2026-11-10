@@ -83,6 +83,7 @@ func main() {
 	rootCmd.AddCommand(breaking(setSNICmd()))
 	rootCmd.AddCommand(setCertCmd())
 	rootCmd.AddCommand(hysteria2BandwidthCmd())
+	rootCmd.AddCommand(breaking(setObfsCmd()))
 	rootCmd.AddCommand(breaking(setAwgPortCmd()))
 
 	err := rootCmd.Execute()
@@ -552,6 +553,41 @@ func setAwgPortCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&port, "port", 0, "UDP port, 1..65535 (0 = default 45820)")
+	return cmd
+}
+
+func setObfsCmd() *cobra.Command {
+	var clearObfs bool
+	cmd := &cobra.Command{
+		Use:   "set-obfs [password]",
+		Short: "Set the hysteria2 salamander obfs password; --clear drops it and answers h3 probes with a stock 404",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			password := ""
+			if clearObfs {
+				if len(args) > 0 {
+					return fmt.Errorf("give either a password or --clear, not both")
+				}
+			} else {
+				if len(args) != 1 {
+					return fmt.Errorf("pass the obfs password as an argument, or --clear to drop obfs")
+				}
+				password = args[0]
+			}
+			if err := nodeops.SetHysteria2Obfs(cmd.Context(), store, opts, password); err != nil {
+				return err
+			}
+			if password == "" {
+				fmt.Println("Obfs cleared: UDP 443 now answers unauthenticated h3 probes with the stock 404; alt-svc is advertised on TCP")
+				fmt.Println("hy2 links already issued carry the obfs password and must be re-issued: clients refresh their subscription")
+				return nil
+			}
+			fmt.Println("Salamander obfs set: UDP 443 answers nothing an h3 client can read")
+			fmt.Println("hy2 links already issued carry the old or no obfs password and must be re-issued: clients refresh their subscription")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&clearObfs, "clear", false, "drop the obfs password, switch UDP 443 to the h3 masquerade posture")
 	return cmd
 }
 

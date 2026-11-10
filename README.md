@@ -19,7 +19,7 @@ The firewall opens `80`, `443/tcp`, `443/udp` and the AmneziaWG UDP port
 |------|-------|------|
 | 80/tcp | nginx | ACME HTTP-01 challenge; everything else `301` to https |
 | 443/tcp | nginx `stream` | split by TLS SNI |
-| 443/udp | sing-box | UDP relay |
+| 443/udp | sing-box | Hysteria2 UDP relay; unauthenticated HTTP/3 probes get the same stock 404 as TCP (masquerade) |
 | 45820/udp | sing-box | AmneziaWG (wireguard) relay; the default port, change with `raw set-awg-port` |
 | 8443/tcp | sing-box | TLS relay inbound; reachable only through the 443 SNI split |
 
@@ -40,7 +40,10 @@ foreign resolvers, so a wholesale ban of popular public DoH does not kill
 it as long as plain DNS reaches them.
 
 The node publishes nothing: no landing page, no health endpoint, no API
-document; an unknown path gets nginx's stock 404.
+document; an unknown path gets nginx's stock 404. Unauthenticated HTTP/3
+probes on UDP 443 get the same stock 404, through the Hysteria2 masquerade;
+the masquerade is not rendered when a salamander obfs password is set,
+because obfs hides the HTTP layer entirely.
 
 ## Deploy
 

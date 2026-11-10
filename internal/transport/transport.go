@@ -13,9 +13,6 @@ import (
 // HashToken marks the per-client token inside the subscription path; generation data, never editable.
 const HashToken = "{hash}"
 
-// DefaultRealitySNI is the SNI a fresh transport hands the REALITY handshake.
-const DefaultRealitySNI = "www.samsung.com"
-
 // SubHashPattern matches the subscription token: 16 random bytes, so 32 hex digits.
 const SubHashPattern = "[a-f0-9]{32}"
 
@@ -30,14 +27,14 @@ type Transport struct {
 	Upgrade string `json:"upgrade,omitempty"`
 	// Sub is a generated wrapper around HashToken, e.g. "/a1b2.../{hash}.bin".
 	Sub string `json:"sub,omitempty"`
-	// RealityServerName is the public SNI the reality handshake masquerades as.
+	// RealityServerName is the public SNI the reality handshake masquerades as; empty means the node's own domain.
 	RealityServerName string `json:"realityServerName,omitempty"`
 }
 
 // Generate returns transport facts with freshly random paths, once per node.
 func Generate() *Transport {
 	return &Transport{
-		RealityServerName: DefaultRealitySNI,
+		RealityServerName: "",
 		GRPC:              rand.Text(),
 		XHTTP:             "/" + rand.Text(),
 		WS:                "/" + rand.Text(),

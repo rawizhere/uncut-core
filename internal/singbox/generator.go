@@ -44,6 +44,14 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 	return json.MarshalIndent(out, "", "  ")
 }
 
+// realityHandshake routes the reality fallback: a foreign SNI borrows the real site; the node's own SNI must not re-enter the 443 split and lands on the https backend, which serves the same stock 404.
+func realityHandshake(sni, domain string) map[string]any {
+	if sni == domain {
+		return map[string]any{"server": "127.0.0.1", "server_port": config.Ports.HTTPSBackend}
+	}
+	return map[string]any{"server": sni, "server_port": 443}
+}
+
 // amneziaWGEndpoint renders the AmneziaWG tunnel as a wireguard endpoint whose peers are the clients with the protocol on.
 func amneziaWGEndpoint(settings config.Settings, clients []config.Client) map[string]any {
 	peers := make([]map[string]any, 0)
@@ -213,11 +221,8 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 				"enabled":     true,
 				"server_name": sni,
 				"reality": map[string]any{
-					"enabled": true,
-					"handshake": map[string]any{
-						"server":      sni,
-						"server_port": 443,
-					},
+					"enabled":             true,
+					"handshake":           realityHandshake(sni, settings.Domain),
 					"private_key":         settings.RealityPrivKey,
 					"short_id":            shortIDs,
 					"max_time_difference": "5m",
@@ -262,6 +267,9 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 		}
 		if settings.Hysteria2Obfs != "" {
 			inbound["obfs"] = map[string]any{"type": "salamander", "password": settings.Hysteria2Obfs}
+		} else {
+			// Masquerade answers unauthenticated h3 probes with the same stock 404 as TCP; salamander hides the HTTP layer, so the two never render together.
+			inbound["masquerade"] = map[string]any{"type": "proxy", "url": fmt.Sprintf("http://127.0.0.1:%d", config.Ports.H3Masq)}
 		}
 		return inbound, nil
 	}

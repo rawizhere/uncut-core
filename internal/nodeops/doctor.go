@@ -43,6 +43,7 @@ func Doctor(ctx context.Context, store *db.Store, opts setup.Options) []Check {
 	checks = append(checks, checkSubscriptions(store, opts))
 	checks = append(checks, checkKernelNetwork()...)
 	checks = append(checks, checkHysteriaBandwidth(settings))
+	checks = append(checks, checkHysteriaMasquerade(ctx, settings))
 	checks = append(checks, checkSwap())
 
 	return checks
@@ -302,6 +303,28 @@ func checkHysteriaBandwidth(settings config.Settings) Check {
 		Pass:   true,
 		Detail: "uncapped (BBR fallback)",
 	}
+}
+
+func checkHysteriaMasquerade(ctx context.Context, settings config.Settings) Check {
+	if !slices.Contains(settings.Protocols, string(config.ProtoHysteria2)) {
+		return Check{Name: "hysteria2 masquerade", Pass: true, Detail: "hysteria2 disabled"}
+	}
+	if settings.Hysteria2Obfs != "" {
+		return Check{Name: "hysteria2 masquerade", Pass: true, Detail: "salamander obfs on, masquerade off"}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/", config.Ports.H3Masq), nil)
+	if err != nil {
+		return Check{Name: "hysteria2 masquerade", Detail: err.Error()}
+	}
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	if err != nil {
+		return Check{Name: "hysteria2 masquerade", Detail: err.Error(), Fix: "check nginx logs in /opt/uncut/data/logs"}
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNotFound {
+		return Check{Name: "hysteria2 masquerade", Detail: fmt.Sprintf("h3 masquerade backend answered %d, want 404", resp.StatusCode), Fix: "raw menu: rebuild, then read the daemon logs"}
+	}
+	return Check{Name: "hysteria2 masquerade", Pass: true, Detail: "h3 probes get the same stock 404 as TCP"}
 }
 
 func checkSwap() Check {

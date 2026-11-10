@@ -460,6 +460,23 @@ func SetHysteria2Bandwidth(ctx context.Context, store *db.Store, opts setup.Opti
 	return nil
 }
 
+// SetHysteria2Obfs switches UDP 443 between the salamander layer and the h3 masquerade posture; an empty password clears obfs. Either side of the switch makes issued hy2 links stale until clients refresh their subscriptions.
+func SetHysteria2Obfs(ctx context.Context, store *db.Store, opts setup.Options, password string) error {
+	if strings.ContainsFunc(password, func(r rune) bool { return r < 0x21 || r > 0x7e }) {
+		return fmt.Errorf("obfs password must be printable ASCII without spaces")
+	}
+	if len(password) > 128 {
+		return fmt.Errorf("obfs password is too long, 128 characters at most")
+	}
+	if err := store.SetSetting("hysteria2_obfs", password); err != nil {
+		return fmt.Errorf("save hysteria2 obfs: %w", err)
+	}
+	if err := setup.Reload(ctx); err != nil {
+		return fmt.Errorf("rebuild configs: %w", err)
+	}
+	return nil
+}
+
 // SetAmneziaWGPort stores the UDP listen port; 0 clears back to the default. The port is not a transport path, so subscriptions re-render but the rev holds.
 func SetAmneziaWGPort(ctx context.Context, store *db.Store, opts setup.Options, port int) error {
 	value := ""

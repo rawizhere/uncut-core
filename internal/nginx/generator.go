@@ -31,6 +31,8 @@ type GeneratorOptions struct {
 	// RealityServerName: the SNI routed to the reality inbound, not https.
 	RealityServerName string
 	MTProtoTLSDomain  string
+	// Hysteria2Obfs gates the alt-svc h3 advertisement: with salamander on, UDP 443 answers nothing an h3 client can read.
+	Hysteria2Obfs string
 }
 
 // conf.d always exists: the image installs nginx.org nginx.
@@ -109,25 +111,27 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 
 	var sb strings.Builder
 	if err := serverTemplate.Execute(&sb, serverData{
-		XHTTP:        active[string(config.ProtoXHTTPStealth)],
-		WS:           active[string(config.ProtoVLESSWS)],
-		Upgrade:      active[string(config.ProtoVLESSHTTPUpgrade)],
-		GRPC:         active[string(config.ProtoVLESSGRPC)],
-		Cert:         certful,
-		Domain:       opts.Domain,
-		WebRoot:      opts.WebRoot,
-		LogDir:       opts.LogDir,
-		InstallDir:   opts.InstallDir,
-		SubLocation:  opts.Transport.SubLocation(),
-		SubsZone:     subsZoneName,
-		SubsDir:      opts.SubsDir,
-		DoHPath:      opts.Transport.DoHPath(),
-		XHTTPPath:    opts.Transport.XHTTPPath(),
-		WSPath:       opts.Transport.WSPath(),
-		UpgradePath:  opts.Transport.UpgradePath(),
-		GRPCService:  opts.Transport.GRPCService(),
-		TelegramPort: config.DefaultTelegramProxyPort,
-		Ports:        config.Ports,
+		XHTTP:         active[string(config.ProtoXHTTPStealth)],
+		Hysteria2:     active[string(config.ProtoHysteria2)],
+		WS:            active[string(config.ProtoVLESSWS)],
+		Upgrade:       active[string(config.ProtoVLESSHTTPUpgrade)],
+		GRPC:          active[string(config.ProtoVLESSGRPC)],
+		Cert:          certful,
+		Domain:        opts.Domain,
+		WebRoot:       opts.WebRoot,
+		LogDir:        opts.LogDir,
+		InstallDir:    opts.InstallDir,
+		Hysteria2Obfs: opts.Hysteria2Obfs,
+		SubLocation:   opts.Transport.SubLocation(),
+		SubsZone:      subsZoneName,
+		SubsDir:       opts.SubsDir,
+		DoHPath:       opts.Transport.DoHPath(),
+		XHTTPPath:     opts.Transport.XHTTPPath(),
+		WSPath:        opts.Transport.WSPath(),
+		UpgradePath:   opts.Transport.UpgradePath(),
+		GRPCService:   opts.Transport.GRPCService(),
+		TelegramPort:  config.DefaultTelegramProxyPort,
+		Ports:         config.Ports,
 	}); err != nil {
 		panic(fmt.Errorf("render server template: %w", err))
 	}
@@ -175,6 +179,16 @@ server {
 }
 
 server {
+    # Hysteria2 masquerade backend: sing-box forwards unauthenticated h3 probes here; the stock 404 matches the TCP side.
+    listen 127.0.0.1:{{.Ports.H3Masq}};
+    server_tokens off;
+
+    location / {
+        return 404;
+    }
+}
+
+server {
     listen 127.0.0.1:{{.Ports.HTTPSBackend}} ssl default_server;
     server_name _;
     server_tokens off;
@@ -207,6 +221,8 @@ server {
     # No OCSP stapling: Let's Encrypt shut its OCSP responders down in 2025.
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+{{if and .Hysteria2 (not .Hysteria2Obfs)}}    add_header alt-svc 'h3=":443"; ma=86400' always;
+{{end}}
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Request-Id $request_id always;
 
@@ -336,20 +352,21 @@ server {
 
 // serverData carries every named field the server template renders; the named form kills the positional-argument bug class the Sprintf chain had.
 type serverData struct {
-	XHTTP, WS, Upgrade, GRPC bool
-	Cert                     bool
-	Domain                   string
-	WebRoot                  string
-	LogDir                   string
-	InstallDir               string
-	SubLocation              string
-	SubsZone                 string
-	SubsDir                  string
-	DoHPath                  string
-	XHTTPPath                string
-	WSPath                   string
-	UpgradePath              string
-	GRPCService              string
-	TelegramPort             string
-	Ports                    config.LoopbackPorts
+	XHTTP, WS, Upgrade, GRPC, Hysteria2 bool
+	Hysteria2Obfs                       string
+	Cert                                bool
+	Domain                              string
+	WebRoot                             string
+	LogDir                              string
+	InstallDir                          string
+	SubLocation                         string
+	SubsZone                            string
+	SubsDir                             string
+	DoHPath                             string
+	XHTTPPath                           string
+	WSPath                              string
+	UpgradePath                         string
+	GRPCService                         string
+	TelegramPort                        string
+	Ports                               config.LoopbackPorts
 }

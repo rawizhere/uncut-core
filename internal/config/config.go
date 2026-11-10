@@ -65,7 +65,7 @@ const (
 // Ports are the fixed loopback listeners behind the 443 split, named once for sing-box, nginx, the daemon and doctor.
 var Ports = LoopbackPorts{
 	WS: 10001, XHTTP: 10002, GRPC: 10003, Upgrade: 10004,
-	Reality: 8443, HTTPSBackend: 8442,
+	Reality: 8443, HTTPSBackend: 8442, H3Masq: 8441,
 	MTProtoBridge: 2398, MTProtoTLS: 2399,
 	DoH: 3053,
 }
@@ -74,6 +74,8 @@ type LoopbackPorts struct {
 	WS, XHTTP, GRPC, Upgrade int
 	// Reality is the reality inbound; HTTPSBackend the nginx https server, both fed by the SNI split.
 	Reality, HTTPSBackend int
+	// H3Masq is the nginx loopback 404 that sing-box masquerades unauthenticated h3 probes to.
+	H3Masq int
 	// MTProtoBridge is the plain mtproto-proxy only tproxy reaches; MTProtoTLS the sing-box FakeTLS inbound.
 	MTProtoBridge, MTProtoTLS int
 	DoH                       int

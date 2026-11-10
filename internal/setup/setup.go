@@ -73,8 +73,8 @@ func Bootstrap(ctx context.Context, store *db.Store, cfg *config.AppConfig, opts
 		return config.Settings{}, err
 	}
 
-	// Node secrets: hex of n random bytes, generated once.
-	for key, n := range map[string]int{"reality_short_id": 8, "mtproto_raw_secret": 16, "webproxy_secret": 16, "hysteria2_obfs": 16} {
+	// Node secrets: hex of n random bytes, generated once. hysteria2_obfs is opt-in: unset keeps the h3 masquerade posture on UDP 443.
+	for key, n := range map[string]int{"reality_short_id": 8, "mtproto_raw_secret": 16, "webproxy_secret": 16} {
 		if get(store, key) != "" {
 			continue
 		}
@@ -174,7 +174,8 @@ func Load(store *db.Store, opts Options) (config.Settings, error) {
 		return config.Settings{}, err
 	}
 	// The transport is the sole source of the reality SNI; it travels with the rev.
-	settings.RealityServerName = settings.Transport.RealitySNI()
+	// The effective SNI falls back to the node's own domain: one name for the whole legend.
+	settings.RealityServerName = cmp.Or(settings.Transport.RealitySNI(), settings.Domain)
 	if settings.Domain == "" {
 		return config.Settings{}, fmt.Errorf("domain is not configured")
 	}
@@ -358,6 +359,7 @@ func generatorOptions(settings config.Settings, opts Options) nginx.GeneratorOpt
 		Transport:         settings.Transport,
 		RealityServerName: settings.RealityServerName,
 		MTProtoTLSDomain:  settings.MTProtoTLSDomain,
+		Hysteria2Obfs:     settings.Hysteria2Obfs,
 	}
 }
 
