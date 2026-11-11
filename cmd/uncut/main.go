@@ -454,6 +454,9 @@ func infoCmd() *cobra.Command {
 			if info.SingBoxVersion != "" {
 				fmt.Printf("singbox:       %s\n", info.SingBoxVersion)
 			}
+			if info.SingBoxImageVersion != "" && info.SingBoxImageVersion != info.SingBoxVersion {
+				fmt.Printf("singbox image: %s (volume copy takes precedence; raw menu: switch)\n", info.SingBoxImageVersion)
+			}
 			fmt.Printf("doh:           %s\n", info.DohURL)
 			return nil
 		},

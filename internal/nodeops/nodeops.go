@@ -72,8 +72,10 @@ type Info struct {
 	MTProtoTLSDomain string `json:"mtproto_tls_domain"`
 	// MTProtoURL is the t.me FakeTLS proxy link; empty while the branch is off.
 	MTProtoURL string `json:"mtproto_url"`
-	// SingBoxVersion is the installed sing-box artifact version.
+	// SingBoxVersion is the sing-box artifact the daemon actually runs: a Maintenance-installed volume copy wins over the image pin.
 	SingBoxVersion string `json:"singbox_version"`
+	// SingBoxImageVersion is the sing-box shipped with the container image; set when a volume copy shadows it.
+	SingBoxImageVersion string `json:"singbox_image_version,omitempty"`
 	// DohURL is the private DoH endpoint behind nginx; same secret family as the subscription URL.
 	DohURL string `json:"doh_url"`
 }
@@ -387,19 +389,20 @@ func GetInfo(store *db.Store, opts setup.Options) (*Info, error) {
 	}
 
 	return &Info{
-		Version:          config.Version,
-		Tag:              settings.Tag,
-		Domain:           settings.Domain,
-		TransportRev:     settings.Transport.Rev(),
-		Protocols:        settings.Protocols,
-		Clients:          len(clients),
-		CertExpires:      certExpires,
-		BridgeURL:        bridgeURL,
-		WebProxyURL:      webproxyURL,
-		MTProtoTLSDomain: settings.MTProtoTLSDomain,
-		MTProtoURL:       mtprotoURL,
-		SingBoxVersion:   updater.CurrentVersion(opts.InstallDir),
-		DohURL:           "https://" + settings.Domain + settings.Transport.DoHPath(),
+		Version:             config.Version,
+		Tag:                 settings.Tag,
+		Domain:              settings.Domain,
+		TransportRev:        settings.Transport.Rev(),
+		Protocols:           settings.Protocols,
+		Clients:             len(clients),
+		CertExpires:         certExpires,
+		BridgeURL:           bridgeURL,
+		WebProxyURL:         webproxyURL,
+		MTProtoTLSDomain:    settings.MTProtoTLSDomain,
+		MTProtoURL:          mtprotoURL,
+		SingBoxVersion:      updater.CurrentVersion(opts.InstallDir),
+		SingBoxImageVersion: updater.ImageVersion(),
+		DohURL:              "https://" + settings.Domain + settings.Transport.DoHPath(),
 	}, nil
 }
 

@@ -74,7 +74,16 @@ func SingBoxBin(installDir string) string {
 
 // CurrentVersion reports the installed sing-box artifact version ("1.13.18-…") by asking the resolved binary itself; empty when absent or unreadable.
 func CurrentVersion(installDir string) string {
-	out, err := exec.Command(SingBoxBin(installDir), "version").CombinedOutput()
+	return versionOf(SingBoxBin(installDir))
+}
+
+// ImageVersion reports the sing-box shipped with the container image (the PATH pin); empty when it cannot run.
+func ImageVersion() string {
+	return versionOf("sing-box")
+}
+
+func versionOf(bin string) string {
+	out, err := exec.Command(bin, "version").CombinedOutput()
 	if err != nil {
 		return ""
 	}

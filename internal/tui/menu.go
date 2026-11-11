@@ -532,7 +532,8 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 						huh.NewOption("4. Export Database Backup", "backup"),
 						huh.NewOption("5. Import Database Backup", "import_backup"),
 						huh.NewOption("6. Set Hysteria 2 Bandwidth", "hysteria_bandwidth"),
-						huh.NewOption("7. Set AmneziaWG Port", "awg_port"),
+						huh.NewOption("7. Set Hysteria 2 Obfs / h3 Posture", "hysteria_obfs"),
+						huh.NewOption("8. Set AmneziaWG Port", "awg_port"),
 						huh.NewOption("0. Back", "back"),
 					).
 					Value(&mAction),
@@ -560,6 +561,8 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 			m.importBackup(ctx)
 		case "hysteria_bandwidth":
 			m.setHysteriaBandwidth(ctx)
+		case "hysteria_obfs":
+			m.setHysteriaObfs(ctx)
 		case "awg_port":
 			m.setAmneziaWGPort(ctx)
 		}
@@ -738,6 +741,59 @@ func (m *Menu) setHysteriaBandwidth(ctx context.Context) {
 		fmt.Println("\nHysteria 2 bandwidth cleared, back to BBR.")
 	} else {
 		fmt.Printf("\nHysteria 2 bandwidth set: up %d Mbps, down %d Mbps.\n", up, down)
+	}
+}
+
+// setHysteriaObfs switches UDP 443 between the salamander layer and the h3 masquerade posture; either switch goes stale on issued hy2 links until clients refresh their subscriptions.
+func (m *Menu) setHysteriaObfs(ctx context.Context) {
+	curr := m.current()
+	posture := "h3 masquerade, unauthenticated probes get the stock 404"
+	if curr.Hysteria2Obfs != "" {
+		posture = "salamander obfs on, UDP 443 answers nothing an h3 client can read"
+	}
+	fmt.Printf("\nCurrent posture: %s\n", posture)
+
+	var action string
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Title("Hysteria 2 posture:").
+				Options(
+					huh.NewOption("1. h3 masquerade (drop obfs)", "clear"),
+					huh.NewOption("2. Salamander obfs with a generated password", "generate"),
+					huh.NewOption("3. Salamander obfs with my password", "custom"),
+					huh.NewOption("0. Back", "back"),
+				).
+				Value(&action),
+		),
+	)
+	if err := form.Run(); err != nil || action == "back" || action == "" {
+		return
+	}
+
+	password := ""
+	switch action {
+	case "clear":
+	case "generate":
+		password = core.RandomHex(16)
+		fmt.Printf("Generated obfs password: %s\n", password)
+	case "custom":
+		var custom string
+		if err := huh.NewForm(huh.NewGroup(huh.NewInput().Title("Obfs password (printable ASCII, no spaces):").Value(&custom))).Run(); err != nil {
+			return
+		}
+		password = strings.TrimSpace(custom)
+	}
+
+	fmt.Println("This kills issued hy2 links until clients refresh their subscription.")
+	if err := nodeops.SetHysteria2Obfs(ctx, m.store, m.opts, password); err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	if password == "" {
+		fmt.Println("\nObfs cleared: UDP 443 now answers h3 probes with the stock 404; alt-svc is advertised on TCP.")
+	} else {
+		fmt.Println("\nSalamander obfs set: UDP 443 answers nothing an h3 client can read.")
 	}
 }
 
