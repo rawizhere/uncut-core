@@ -44,10 +44,10 @@ func GenerateConfig(settings config.Settings, clients []config.Client) ([]byte, 
 	return json.MarshalIndent(out, "", "  ")
 }
 
-// realityHandshake routes the reality fallback: a foreign SNI borrows the real site; the node's own SNI must not re-enter the 443 split and lands on the https backend, which serves the same stock 404.
+// realityHandshake routes the reality fallback: a foreign SNI borrows the real site; the node's own SNI must not re-enter the 443 split and lands on the non-proxy_protocol https fallback listener, which serves the same stock 404.
 func realityHandshake(sni, domain string) map[string]any {
 	if sni == domain {
-		return map[string]any{"server": "127.0.0.1", "server_port": config.Ports.HTTPSBackend}
+		return map[string]any{"server": "127.0.0.1", "server_port": config.Ports.HTTPSFallback}
 	}
 	return map[string]any{"server": sni, "server_port": 443}
 }
@@ -161,8 +161,8 @@ func generateInbound(proto string, settings config.Settings, clients []config.Cl
 				"path": settings.Transport.XHTTPPath(),
 				// packet-up survives the nginx hop; stream-up stalls behind an h1 proxy.
 				"mode":                    "packet-up",
-				"x_padding_bytes":         "100-2500",
-				"no_sse_header":           false,
+				"x_padding_bytes":         "100-1000",
+				"no_sse_header":           true,
 				"sc_max_each_post_bytes":  1000000,
 				"sc_max_buffered_posts":   30,
 				"trusted_x_forwarded_for": []string{"X-Forwarded-For"},

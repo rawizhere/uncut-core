@@ -86,10 +86,10 @@ func GenerateVLESSWSLink(client config.Client, s config.Settings) string {
 func xhttpExtra() string {
 	extra, _ := json.Marshal(map[string]any{
 		"xmux": map[string]string{
-			"maxConcurrency":   "16-32",
-			"hMaxReusableSecs": "300",
+			"maxConcurrency":   "8-16",
+			"hMaxReusableSecs": "180-600",
 		},
-		"xPaddingBytes": "100-2500",
+		"xPaddingBytes": "100-1000",
 	})
 	return base64.RawURLEncoding.EncodeToString(extra)
 }

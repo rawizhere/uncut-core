@@ -61,7 +61,7 @@ func Files(opts GeneratorOptions) (map[string][]byte, error) {
 	}, nil
 }
 
-// GenerateStreamConfig splits TCP 443 by SNI: reality → 8443, FakeTLS → its instance, else → https. A tls domain equal to the reality SNI is an error.
+// GenerateStreamConfig splits TCP 443 by SNI: reality → 18443 (stripper) → 8443, FakeTLS → 12399 (stripper) → 2399, else → 8442 (with proxy_protocol). A tls domain equal to the reality SNI is an error.
 func GenerateStreamConfig(opts GeneratorOptions) (string, error) {
 	sni := strings.ToLower(strings.TrimSpace(opts.RealityServerName))
 	tlsDomain := strings.ToLower(strings.TrimSpace(opts.MTProtoTLSDomain))
@@ -70,16 +70,35 @@ func GenerateStreamConfig(opts GeneratorOptions) (string, error) {
 		return "", fmt.Errorf("mtproto tls domain %q collides with the reality SNI: one SNI can hold only one map key", tlsDomain)
 	}
 
+	active := make(map[string]bool, len(opts.ActiveProtocols))
+	for _, p := range config.ResolveProtocols(opts.ActiveProtocols) {
+		active[p] = true
+	}
+	realityActive := sni != "" && active[string(config.ProtoVLESSReality)]
+
 	var mapBody strings.Builder
-	if sni != "" {
-		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", sni, config.Ports.Reality)
+	var strippers strings.Builder
+	if realityActive {
+		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", sni, config.Ports.RealityProxyStrip)
+		fmt.Fprintf(&strippers, `
+    server {
+        listen 127.0.0.1:%d proxy_protocol;
+        proxy_pass 127.0.0.1:%d;
+    }
+`, config.Ports.RealityProxyStrip, config.Ports.Reality)
 	}
 	if tlsDomain != "" {
-		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", tlsDomain, config.Ports.MTProtoTLS)
+		fmt.Fprintf(&mapBody, "        %s 127.0.0.1:%d;\n", tlsDomain, config.Ports.MTProtoProxyStrip)
+		fmt.Fprintf(&strippers, `
+    server {
+        listen 127.0.0.1:%d proxy_protocol;
+        proxy_pass 127.0.0.1:%d;
+    }
+`, config.Ports.MTProtoProxyStrip, config.Ports.MTProtoTLS)
 	}
 	fmt.Fprintf(&mapBody, "        default 127.0.0.1:%d;\n", config.Ports.HTTPSBackend)
 
-	body := `# SNI splitter: TCP 443 is fanned out by TLS server name. Reality (sing-box), the optional MTProxy FakeTLS branch and the https server share one public port; UDP 443 stays with Hysteria2 - the stream module is TCP only.
+	body := `# SNI splitter: TCP 443 is fanned out by TLS server name. proxy_protocol preserves real client IPs for the https server while local strippers unwrap it for Reality and MTProto FakeTLS; UDP 443 stays with Hysteria2 - the stream module is TCP only.
 stream {
     map $ssl_preread_server_name $uncut_tls_backend {
 ` + mapBody.String() + `    }
@@ -88,9 +107,10 @@ stream {
         listen 0.0.0.0:443;
         listen [::]:443;
         ssl_preread on;
+        proxy_protocol on;
         proxy_pass $uncut_tls_backend;
     }
-}
+` + strippers.String() + `}
 `
 	return body, nil
 }
@@ -144,6 +164,7 @@ var serverTemplate = template.Must(template.New("uncut").Parse(`{{if .XHTTP}}ups
     server 127.0.0.1:{{.Ports.XHTTP}};
     keepalive 64;
     keepalive_requests 10000;
+    keepalive_timeout 360s;
 }
 
 {{end}}map $http_upgrade $connection_upgrade {
@@ -179,9 +200,11 @@ server {
 }
 
 server {
-    # Hysteria2 masquerade backend: sing-box forwards unauthenticated h3 probes here; the stock 404 matches the TCP side.
+    # Hysteria2 masquerade backend: sing-box forwards unauthenticated h3 probes here; headers and stock 404 match the TCP side.
     listen 127.0.0.1:{{.Ports.H3Masq}};
     server_tokens off;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
 
     location / {
         return 404;
@@ -189,7 +212,8 @@ server {
 }
 
 server {
-    listen 127.0.0.1:{{.Ports.HTTPSBackend}} ssl default_server;
+    listen 127.0.0.1:{{.Ports.HTTPSBackend}} ssl proxy_protocol default_server;
+    listen 127.0.0.1:{{.Ports.HTTPSFallback}} ssl default_server;
     server_name _;
     server_tokens off;
     ssl_reject_handshake on;
@@ -199,8 +223,13 @@ server {
 
 {{if .Cert}}server {
     # TCP 443 is owned by the stream splitter; nginx sits on loopback, no QUIC (UDP 443 belongs to Hysteria2).
-    listen 127.0.0.1:{{.Ports.HTTPSBackend}} ssl;
+    listen 127.0.0.1:{{.Ports.HTTPSBackend}} ssl proxy_protocol;
+    listen 127.0.0.1:{{.Ports.HTTPSFallback}} ssl;
+    set_real_ip_from 127.0.0.1;
+    real_ip_header proxy_protocol;
     http2 on;
+    http2_max_concurrent_streams 256;
+    keepalive_timeout 300s;
     server_name {{.Domain}};
     server_tokens off;
 
@@ -224,7 +253,6 @@ server {
 {{if and .Hysteria2 (not .Hysteria2Obfs)}}    add_header alt-svc 'h3=":443"; ma=86400' always;
 {{end}}
     add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Request-Id $request_id always;
 
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
@@ -260,8 +288,8 @@ server {
         proxy_next_upstream off;
         tcp_nodelay on;
         client_max_body_size 0;
-        proxy_read_timeout 1h;
-        proxy_send_timeout 1h;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
