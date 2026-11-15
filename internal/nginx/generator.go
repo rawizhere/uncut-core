@@ -139,15 +139,15 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 		LogDir:       opts.LogDir,
 		InstallDir:   opts.InstallDir,
 		SubLocation:  opts.Transport.SubLocation(),
-		SubsZone:      subsZoneName,
-		SubsDir:       opts.SubsDir,
-		DoHPath:       opts.Transport.DoHPath(),
-		XHTTPPath:     opts.Transport.XHTTPPath(),
-		WSPath:        opts.Transport.WSPath(),
-		UpgradePath:   opts.Transport.UpgradePath(),
-		GRPCService:   opts.Transport.GRPCService(),
-		TelegramPort:  config.DefaultTelegramProxyPort,
-		Ports:         config.Ports,
+		SubsZone:     subsZoneName,
+		SubsDir:      opts.SubsDir,
+		DoHPath:      opts.Transport.DoHPath(),
+		XHTTPPath:    opts.Transport.XHTTPPath(),
+		WSPath:       opts.Transport.WSPath(),
+		UpgradePath:  opts.Transport.UpgradePath(),
+		GRPCService:  opts.Transport.GRPCService(),
+		TelegramPort: config.DefaultTelegramProxyPort,
+		Ports:        config.Ports,
 	}); err != nil {
 		panic(fmt.Errorf("render server template: %w", err))
 	}
@@ -376,18 +376,18 @@ server {
 type serverData struct {
 	XHTTP, WS, Upgrade, GRPC bool
 	Cert                     bool
-	Domain                              string
-	WebRoot                             string
-	LogDir                              string
-	InstallDir                          string
-	SubLocation                         string
-	SubsZone                            string
-	SubsDir                             string
-	DoHPath                             string
-	XHTTPPath                           string
-	WSPath                              string
-	UpgradePath                         string
-	GRPCService                         string
-	TelegramPort                        string
-	Ports                               config.LoopbackPorts
+	Domain                   string
+	WebRoot                  string
+	LogDir                   string
+	InstallDir               string
+	SubLocation              string
+	SubsZone                 string
+	SubsDir                  string
+	DoHPath                  string
+	XHTTPPath                string
+	WSPath                   string
+	UpgradePath              string
+	GRPCService              string
+	TelegramPort             string
+	Ports                    config.LoopbackPorts
 }
