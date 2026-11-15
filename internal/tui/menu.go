@@ -791,7 +791,7 @@ func (m *Menu) setHysteriaObfs(ctx context.Context) {
 		return
 	}
 	if password == "" {
-		fmt.Println("\nObfs cleared: UDP 443 now answers h3 probes with the stock 404; alt-svc is advertised on TCP.")
+		fmt.Println("\nObfs cleared: UDP 443 now answers h3 probes with the stock 404.")
 	} else {
 		fmt.Println("\nSalamander obfs set: UDP 443 answers nothing an h3 client can read.")
 	}

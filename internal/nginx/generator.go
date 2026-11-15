@@ -31,8 +31,6 @@ type GeneratorOptions struct {
 	// RealityServerName: the SNI routed to the reality inbound, not https.
 	RealityServerName string
 	MTProtoTLSDomain  string
-	// Hysteria2Obfs gates the alt-svc h3 advertisement: with salamander on, UDP 443 answers nothing an h3 client can read.
-	Hysteria2Obfs string
 }
 
 // conf.d always exists: the image installs nginx.org nginx.
@@ -131,18 +129,16 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 
 	var sb strings.Builder
 	if err := serverTemplate.Execute(&sb, serverData{
-		XHTTP:         active[string(config.ProtoXHTTPStealth)],
-		Hysteria2:     active[string(config.ProtoHysteria2)],
-		WS:            active[string(config.ProtoVLESSWS)],
-		Upgrade:       active[string(config.ProtoVLESSHTTPUpgrade)],
-		GRPC:          active[string(config.ProtoVLESSGRPC)],
-		Cert:          certful,
-		Domain:        opts.Domain,
-		WebRoot:       opts.WebRoot,
-		LogDir:        opts.LogDir,
-		InstallDir:    opts.InstallDir,
-		Hysteria2Obfs: opts.Hysteria2Obfs,
-		SubLocation:   opts.Transport.SubLocation(),
+		XHTTP:        active[string(config.ProtoXHTTPStealth)],
+		WS:           active[string(config.ProtoVLESSWS)],
+		Upgrade:      active[string(config.ProtoVLESSHTTPUpgrade)],
+		GRPC:         active[string(config.ProtoVLESSGRPC)],
+		Cert:         certful,
+		Domain:       opts.Domain,
+		WebRoot:      opts.WebRoot,
+		LogDir:       opts.LogDir,
+		InstallDir:   opts.InstallDir,
+		SubLocation:  opts.Transport.SubLocation(),
 		SubsZone:      subsZoneName,
 		SubsDir:       opts.SubsDir,
 		DoHPath:       opts.Transport.DoHPath(),
@@ -250,8 +246,6 @@ server {
     # No OCSP stapling: Let's Encrypt shut its OCSP responders down in 2025.
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-{{if and .Hysteria2 (not .Hysteria2Obfs)}}    add_header alt-svc 'h3=":443"; ma=86400' always;
-{{end}}
     add_header X-Content-Type-Options "nosniff" always;
 
     proxy_set_header Host $host;
@@ -380,9 +374,8 @@ server {
 
 // serverData carries every named field the server template renders; the named form kills the positional-argument bug class the Sprintf chain had.
 type serverData struct {
-	XHTTP, WS, Upgrade, GRPC, Hysteria2 bool
-	Hysteria2Obfs                       string
-	Cert                                bool
+	XHTTP, WS, Upgrade, GRPC bool
+	Cert                     bool
 	Domain                              string
 	WebRoot                             string
 	LogDir                              string

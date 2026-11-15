@@ -359,7 +359,6 @@ func generatorOptions(settings config.Settings, opts Options) nginx.GeneratorOpt
 		Transport:         settings.Transport,
 		RealityServerName: settings.RealityServerName,
 		MTProtoTLSDomain:  settings.MTProtoTLSDomain,
-		Hysteria2Obfs:     settings.Hysteria2Obfs,
 	}
 }
 

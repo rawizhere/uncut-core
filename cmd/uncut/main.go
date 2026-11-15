@@ -581,7 +581,7 @@ func setObfsCmd() *cobra.Command {
 				return err
 			}
 			if password == "" {
-				fmt.Println("Obfs cleared: UDP 443 now answers unauthenticated h3 probes with the stock 404; alt-svc is advertised on TCP")
+				fmt.Println("Obfs cleared: UDP 443 now answers unauthenticated h3 probes with the stock 404")
 				fmt.Println("hy2 links already issued carry the obfs password and must be re-issued: clients refresh their subscription")
 				return nil
 			}
