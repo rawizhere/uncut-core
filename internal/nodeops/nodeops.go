@@ -482,9 +482,13 @@ func SetHysteria2Obfs(ctx context.Context, store *db.Store, opts setup.Options, 
 
 // SetAmneziaWGPort stores the UDP listen port; 0 clears back to the default. The port is not a transport path, so subscriptions re-render but the rev holds.
 func SetAmneziaWGPort(ctx context.Context, store *db.Store, opts setup.Options, port int) error {
+	settings, err := setup.Load(store, opts)
+	if err != nil {
+		return err
+	}
 	value := ""
 	if port != 0 {
-		if err := config.ValidateAWGPort(port); err != nil {
+		if err := config.ValidateAWGPortForHop(port, settings.Hysteria2HopPorts); err != nil {
 			return err
 		}
 		value = strconv.Itoa(port)
@@ -496,6 +500,30 @@ func SetAmneziaWGPort(ctx context.Context, store *db.Store, opts setup.Options, 
 		return fmt.Errorf("rebuild configs: %w", err)
 	}
 	return nil
+}
+
+// SetHysteria2HopPorts stores the Hysteria2 UDP port-hopping range ("from:to"); an empty range resets to the default.
+// Subscriptions re-render immediately, while the host DNAT and ufw must be re-applied with HOP=<range>.
+func SetHysteria2HopPorts(ctx context.Context, store *db.Store, opts setup.Options, hopRange string) (string, error) {
+	settings, err := setup.Load(store, opts)
+	if err != nil {
+		return "", err
+	}
+	value := config.Hysteria2HopPortsDefault
+	if strings.TrimSpace(hopRange) != "" {
+		validated, err := config.ParseAndValidateHopPorts(hopRange, settings.AmneziaWGPort())
+		if err != nil {
+			return "", err
+		}
+		value = validated
+	}
+	if err := store.SetSetting("hysteria2_hop_ports", value); err != nil {
+		return "", fmt.Errorf("save hysteria2 hop ports: %w", err)
+	}
+	if err := setup.Reload(ctx); err != nil {
+		return "", fmt.Errorf("rebuild configs: %w", err)
+	}
+	return value, nil
 }
 
 // SetCert installs a custom certificate after checking the key matches it and it covers the node domain, then has the daemon reload nginx and sing-box.
@@ -531,6 +559,20 @@ func SwitchSingbox(ctx context.Context, opts setup.Options, version string) erro
 		return err
 	}
 	return setup.Reload(ctx, "sing-box")
+}
+
+// ResetSingbox removes the volume-installed sing-box override and restarts onto the patched image binary.
+func ResetSingbox(ctx context.Context, opts setup.Options) (bool, error) {
+	removed, err := updater.ResetToImage(opts.InstallDir)
+	if err != nil {
+		return false, err
+	}
+	if removed {
+		if err := setup.Reload(ctx, "sing-box"); err != nil {
+			return true, err
+		}
+	}
+	return removed, nil
 }
 
 // ExportBackup snapshots the database to backup_<timestamp>.db in the data directory and returns its path.

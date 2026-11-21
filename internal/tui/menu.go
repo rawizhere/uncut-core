@@ -533,7 +533,8 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 						huh.NewOption("5. Import Database Backup", "import_backup"),
 						huh.NewOption("6. Set Hysteria 2 Bandwidth", "hysteria_bandwidth"),
 						huh.NewOption("7. Set Hysteria 2 Obfs / h3 Posture", "hysteria_obfs"),
-						huh.NewOption("8. Set AmneziaWG Port", "awg_port"),
+						huh.NewOption("8. Set Hysteria 2 Hop Ports", "hysteria_hop"),
+						huh.NewOption("9. Set AmneziaWG Port", "awg_port"),
 						huh.NewOption("0. Back", "back"),
 					).
 					Value(&mAction),
@@ -563,6 +564,8 @@ func (m *Menu) showMaintenanceMenu(ctx context.Context) {
 			m.setHysteriaBandwidth(ctx)
 		case "hysteria_obfs":
 			m.setHysteriaObfs(ctx)
+		case "hysteria_hop":
+			m.setHysteriaHopPorts(ctx)
 		case "awg_port":
 			m.setAmneziaWGPort(ctx)
 		}
@@ -587,6 +590,14 @@ func (m *Menu) renewCertificate(ctx context.Context) {
 func (m *Menu) switchSingboxVersion(ctx context.Context) {
 	fmt.Println("\nFetching available releases from GitHub...")
 	var opts []huh.Option[string]
+	if updater.SingBoxBin(m.opts.InstallDir) != "sing-box" {
+		imageVer := updater.ImageVersion()
+		label := "Use image version (patched)"
+		if imageVer != "" {
+			label = fmt.Sprintf("Use image version (%s, patched)", imageVer)
+		}
+		opts = append(opts, huh.NewOption(label, "?reset"))
+	}
 	versions, err := updater.GetAvailableVersions(ctx, nil)
 	if err != nil || len(versions) == 0 {
 		// api.github.com is unreliable from some datacenters; offer a manual version instead of dying on the fetch.
@@ -616,13 +627,28 @@ func (m *Menu) switchSingboxVersion(ctx context.Context) {
 			huh.NewInput().
 				Title("Sing-box Extended version (e.g. 1.13.18-extended-2.6.5):").
 				Value(&targetVer),
-		))
+		).WithHideFunc(func() bool { return targetVer == "?reset" }))
 	}
 	form := huh.NewForm(forms...)
 	if err := form.Run(); err != nil || targetVer == "" || targetVer == "?manual" {
 		return
 	}
 
+	if targetVer == "?reset" {
+		removed, err := nodeops.ResetSingbox(ctx, m.opts)
+		if err != nil {
+			fmt.Printf("Reset error: %v\n\n", err)
+			return
+		}
+		if removed {
+			fmt.Printf("Volume override removed; restarted onto image sing-box (%s).\n\n", updater.ImageVersion())
+		} else {
+			fmt.Println("Already using the image sing-box binary.")
+		}
+		return
+	}
+
+	fmt.Println("Note: upstream shtorm-7 releases do not include the local muxfix patch and shadow the image binary until reset.")
 	fmt.Printf("Downloading and installing %s...\n", targetVer)
 	if err := nodeops.SwitchSingbox(ctx, m.opts, targetVer); err != nil {
 		fmt.Printf("Installation error: %v\n\n", err)
@@ -795,6 +821,62 @@ func (m *Menu) setHysteriaObfs(ctx context.Context) {
 	} else {
 		fmt.Println("\nSalamander obfs set: UDP 443 answers nothing an h3 client can read.")
 	}
+}
+
+func (m *Menu) setHysteriaHopPorts(ctx context.Context) {
+	s := m.current()
+	current := s.Hysteria2HopPorts
+	if current == "" {
+		current = config.Hysteria2HopPortsDefault
+	}
+	fmt.Printf("\nCurrent Hysteria 2 hop ports: %s (default %s)\n", current, config.Hysteria2HopPortsDefault)
+
+	var raw string
+	form := huh.NewInput().Title("New UDP hop range from:to (type 'default' to reset):").Value(&raw)
+	if err := form.Run(); err != nil {
+		return
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return
+	}
+
+	target := config.Hysteria2HopPortsDefault
+	storeValue := ""
+	if !strings.EqualFold(trimmed, "default") {
+		validated, err := config.ParseAndValidateHopPorts(trimmed, s.AmneziaWGPort())
+		if err != nil {
+			fmt.Printf("Invalid hop range: %v\n", err)
+			return
+		}
+		target = validated
+		storeValue = validated
+	}
+
+	var confirm bool
+	cForm := huh.NewForm(
+		huh.NewGroup(
+			huh.NewConfirm().
+				Title(fmt.Sprintf("Change the Hysteria 2 UDP hop range to %s? Issued hy2:// links carry the old mport= range and die.", target)).
+				Value(&confirm),
+		),
+	)
+	if err := cForm.Run(); err != nil || !confirm {
+		return
+	}
+
+	applied, err := nodeops.SetHysteria2HopPorts(ctx, m.store, m.opts, storeValue)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	awgFlag := ""
+	if awgPort := s.AmneziaWGPort(); awgPort != config.DefaultAmneziaWGPort {
+		awgFlag = fmt.Sprintf(" AWGPORT=%d", awgPort)
+	}
+	fmt.Printf("\nHysteria 2 hop ports set to %s; configs rebuilt.\n", applied)
+	fmt.Printf("Apply it on the host: HOP=%s%s deployments/host.sh\n", applied, awgFlag)
+	fmt.Println("hy2:// links already issued carry the old mport= range and must be re-issued.")
 }
 
 func (m *Menu) setAmneziaWGPort(ctx context.Context) {

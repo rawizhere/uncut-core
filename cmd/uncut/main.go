@@ -84,6 +84,7 @@ func main() {
 	rootCmd.AddCommand(setCertCmd())
 	rootCmd.AddCommand(hysteria2BandwidthCmd())
 	rootCmd.AddCommand(breaking(setObfsCmd()))
+	rootCmd.AddCommand(breaking(setHopPortsCmd()))
 	rootCmd.AddCommand(breaking(setAwgPortCmd()))
 
 	err := rootCmd.Execute()
@@ -177,14 +178,38 @@ func daemonCmd() *cobra.Command {
 }
 
 func singboxVersionCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:         "singbox-version <version>",
-		Short:       "Install a Sing-box Extended release by version, without a GitHub API fetch",
-		Args:        cobra.ExactArgs(1),
+	var reset bool
+	cmd := &cobra.Command{
+		Use:         "singbox-version [version]",
+		Short:       "Install an upstream Sing-box Extended release or --reset back to the image binary",
+		Args:        cobra.MaximumNArgs(1),
 		Annotations: map[string]string{noStore: "true"},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			target := strings.TrimPrefix(args[0], "v")
 			ctx := cmd.Context()
+			if reset {
+				if len(args) > 0 {
+					return fmt.Errorf("pass either a version or --reset, not both")
+				}
+				removed, err := nodeops.ResetSingbox(ctx, opts)
+				if !removed && err != nil {
+					return err
+				}
+				if removed && err != nil {
+					fmt.Printf("Volume sing-box override removed; not switched yet: %v\n", err)
+					return nil
+				}
+				if !removed {
+					fmt.Printf("Already using the image sing-box binary (%s).\n", updater.ImageVersion())
+					return nil
+				}
+				fmt.Printf("Volume sing-box override removed; restarted onto image sing-box (%s).\n", updater.ImageVersion())
+				return nil
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("version is required (or pass --reset to restore the image binary)")
+			}
+			target := strings.TrimPrefix(args[0], "v")
+			fmt.Println("Note: upstream shtorm-7 binaries do not include the local muxfix patch and shadow the image binary until `raw singbox-version --reset`.")
 			fmt.Printf("Downloading and installing %s...\n", target)
 			if err := updater.InstallSingboxVersion(ctx, target, filepath.Join(installDir, "bin", "sing-box")); err != nil {
 				return err
@@ -197,6 +222,8 @@ func singboxVersionCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&reset, "reset", false, "remove volume override and return to the patched image binary")
+	return cmd
 }
 
 func menuCmd() *cobra.Command {
@@ -521,6 +548,43 @@ func hysteria2BandwidthCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func setHopPortsCmd() *cobra.Command {
+	var useDefault bool
+	cmd := &cobra.Command{
+		Use:   "set-hop-ports [from:to]",
+		Short: "Set the Hysteria2 UDP port-hopping range; --default resets to 20000:30000",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			hopRange := ""
+			if useDefault {
+				if len(args) > 0 {
+					return fmt.Errorf("give either a port range or --default, not both")
+				}
+			} else {
+				if len(args) != 1 {
+					return fmt.Errorf("port range is required in from:to form (or pass --default to reset to %s)", config.Hysteria2HopPortsDefault)
+				}
+				hopRange = args[0]
+			}
+			applied, err := nodeops.SetHysteria2HopPorts(cmd.Context(), store, opts, hopRange)
+			if err != nil {
+				return err
+			}
+			settings, loadErr := setup.Load(store, opts)
+			awgFlag := ""
+			if loadErr == nil && settings.AmneziaWGPort() != config.DefaultAmneziaWGPort {
+				awgFlag = fmt.Sprintf(" AWGPORT=%d", settings.AmneziaWGPort())
+			}
+			fmt.Printf("Hysteria2 hop ports set to %s; configs rebuilt\n", applied)
+			fmt.Printf("Apply it on the host: HOP=%s%s deployments/host.sh\n", applied, awgFlag)
+			fmt.Println("hy2:// links already issued carry the old mport= range and must be re-issued.")
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&useDefault, "default", false, "reset to the default "+config.Hysteria2HopPortsDefault)
+	return cmd
 }
 
 func setAwgPortCmd() *cobra.Command {

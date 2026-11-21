@@ -4,7 +4,7 @@ set -eu
 
 REF=${REF:-main}
 RAW=https://raw.githubusercontent.com/rawizhere/uncut-core/$REF/deployments
-HOP=20000:30000
+HOP=${HOP:-20000:30000}
 AWGPORT=${AWGPORT:-45820}
 LOGS=/opt/uncut/data/logs/nginx
 
@@ -79,7 +79,7 @@ Description=Hysteria2 port hopping: UDP $HOP onto 443
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'iptables -t nat -C PREROUTING -p udp --dport $HOP -j REDIRECT --to-ports 443 2>/dev/null || iptables -t nat -A PREROUTING -p udp --dport $HOP -j REDIRECT --to-ports 443'
+ExecStart=/bin/sh -c 'iptables -t nat -S PREROUTING | while read -r op chain rest; do case "\$op \$chain \$rest" in "-A PREROUTING "*"-p udp"*"-j REDIRECT --to-ports 443"*) iptables -t nat -D "\$chain" \$rest ;; esac; done; iptables -t nat -A PREROUTING -p udp --dport $HOP -j REDIRECT --to-ports 443'
 
 [Install]
 WantedBy=multi-user.target

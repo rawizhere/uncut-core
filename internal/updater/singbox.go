@@ -72,6 +72,19 @@ func SingBoxBin(installDir string) string {
 	return "sing-box"
 }
 
+// ResetToImage removes the volume-installed sing-box override so SingBoxBin falls back to the image binary.
+// It reports true when an existing volume binary was removed.
+func ResetToImage(installDir string) (bool, error) {
+	volume := filepath.Join(installDir, "bin", "sing-box")
+	if err := os.Remove(volume); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("remove volume sing-box binary: %w", err)
+	}
+	return true, nil
+}
+
 // CurrentVersion reports the installed sing-box artifact version ("1.13.18-…") by asking the resolved binary itself; empty when absent or unreadable.
 func CurrentVersion(installDir string) string {
 	return versionOf(SingBoxBin(installDir))

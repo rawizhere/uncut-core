@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -229,6 +230,11 @@ func (s Settings) AmneziaWGPort() int {
 
 // ValidateAWGPort rejects ports the node or the host layer already owns: the TCP 443 split, Hysteria2's UDP 443, its hop DNAT and the loopback listeners.
 func ValidateAWGPort(port int) error {
+	return ValidateAWGPortForHop(port, Hysteria2HopPortsDefault)
+}
+
+// ValidateAWGPortForHop validates an AmneziaWG UDP listen port against reserved node ports and the active Hysteria2 hop range.
+func ValidateAWGPortForHop(port int, hopRange string) error {
 	if port < 1 || port > 65535 {
 		return fmt.Errorf("port must be 1..65535")
 	}
@@ -237,10 +243,49 @@ func ValidateAWGPort(port int) error {
 			return fmt.Errorf("port %d is already owned by the node", port)
 		}
 	}
-	if port >= 20000 && port <= 30000 {
-		return fmt.Errorf("port %d falls into the Hysteria2 hop range 20000:30000, whose DNAT sends it to UDP 443", port)
+	if strings.TrimSpace(hopRange) == "" {
+		hopRange = Hysteria2HopPortsDefault
+	}
+	if from, to, err := parsePortRange(hopRange); err == nil && port >= from && port <= to {
+		return fmt.Errorf("port %d falls into the Hysteria2 hop range %d:%d, whose DNAT sends it to UDP 443", port, from, to)
 	}
 	return nil
+}
+
+// ParseAndValidateHopPorts validates a Hysteria2 port-hopping range in "from:to" form and rejects overlaps with reserved node ports or awgPort.
+func ParseAndValidateHopPorts(raw string, awgPort int) (string, error) {
+	from, to, err := parsePortRange(raw)
+	if err != nil {
+		return "", err
+	}
+	if from < 1024 || to > 65535 || from >= to {
+		return "", fmt.Errorf("hop range must satisfy 1024 <= from < to <= 65535")
+	}
+	for _, taken := range []int{2398, 2399} {
+		if taken >= from && taken <= to {
+			return "", fmt.Errorf("hop range %d:%d overlaps reserved node port %d", from, to, taken)
+		}
+	}
+	if awgPort > 0 && awgPort >= from && awgPort <= to {
+		return "", fmt.Errorf("hop range %d:%d overlaps AmneziaWG port %d", from, to, awgPort)
+	}
+	return fmt.Sprintf("%d:%d", from, to), nil
+}
+
+func parsePortRange(raw string) (int, int, error) {
+	parts := strings.Split(strings.TrimSpace(raw), ":")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("hop range must be in from:to form (e.g. %s)", Hysteria2HopPortsDefault)
+	}
+	from, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid range start port: %w", err)
+	}
+	to, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid range end port: %w", err)
+	}
+	return from, to, nil
 }
 
 const (

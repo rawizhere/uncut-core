@@ -1,0 +1,68 @@
+diff --git a/vless/service.go b/vless/service.go
+index 34bf03f..3d51b97 100644
+--- a/vless/service.go
++++ b/vless/service.go
+@@ -92,24 +92,6 @@ func (s *Service[T]) NewConnectionWithOptions(ctx context.Context, conn net.Conn
+ 	s.mu.RUnlock()
+ 	ctx = auth.ContextWithUser(ctx, user)
+ 
+-	s.mu.Lock()
+-	s.conns[user] = append(s.conns[user], conn)
+-	s.mu.Unlock()
+-	originalOnClose := onClose
+-	onClose = N.OnceClose(func(it error) {
+-		s.mu.Lock()
+-		conns := s.conns[user]
+-		for i, c := range conns {
+-			if c == conn {
+-				s.conns[user] = append(conns[:i], conns[i+1:]...)
+-				break
+-			}
+-		}
+-		s.mu.Unlock()
+-		if originalOnClose != nil {
+-			originalOnClose(it)
+-		}
+-	})
+ 	if request.Flow == FlowVision && request.Command == vmess.NetworkUDP {
+ 		return E.New(FlowVision, " flow does not support UDP")
+ 	} else if request.Flow != userFlow {
+@@ -132,12 +114,37 @@ func (s *Service[T]) NewConnectionWithOptions(ctx context.Context, conn net.Conn
+ 	default:
+ 		return E.New("unknown flow: ", userFlow)
+ 	}
++
++	s.mu.Lock()
++	s.conns[user] = append(s.conns[user], conn)
++	s.mu.Unlock()
++	originalOnClose := onClose
++	onClose = N.OnceClose(func(it error) {
++		s.mu.Lock()
++		conns := s.conns[user]
++		for i, c := range conns {
++			if c == conn {
++				s.conns[user] = append(conns[:i], conns[i+1:]...)
++				break
++			}
++		}
++		s.mu.Unlock()
++		if originalOnClose != nil {
++			originalOnClose(it)
++		}
++	})
+ 	switch request.Command {
+ 	case vmess.CommandTCP:
+ 		s.handler.NewConnectionEx(ctx, conn, source, request.Destination, onClose)
+ 		return nil
+ 	case vmess.CommandMux:
+-		return vmess.HandleMuxConnection(ctx, conn, source, s.handler)
++		// HandleMuxConnection does not take onClose — fire it here so the
++		// conns entry does not leak for the lifetime of the process.
++		err := vmess.HandleMuxConnection(ctx, conn, source, s.handler)
++		if onClose != nil {
++			onClose(err)
++		}
++		return err
+ 	default:
+ 		return E.New("unknown command: ", request.Command)
+ 	}

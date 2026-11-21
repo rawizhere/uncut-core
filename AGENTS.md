@@ -57,6 +57,14 @@ see host-level ufw and fail2ban, hence the last two checks.
 - Update: `docker compose pull && docker compose up -d` from `deployments/`
   on the node. State lives in bind-backed volumes; recreation is safe, the
   installed sing-box version survives.
+- Container image ships `sing-box-extended` built with the local mux leak fix
+  (`patches/sing-vmess-muxfix.patch`). `raw singbox-version <ver>` or TUI
+  downloads an unpatched upstream release to `/opt/sing-box/bin/sing-box`,
+  which shadows the image binary; run `raw singbox-version --reset` (or choose
+  "Use image version" in TUI) to return to the patched image binary.
+- Protocols: `raw set-protocols --protocols ...` (and TUI `6. Inbound Protocols`)
+  toggles active server transports (for example, turning off `vless-ws` and
+  `vless-grpc` without code changes).
 - Change node tag: edit `TAG=` in `deployments/.env`, recreate the container.
   Subscriptions regenerate on boot.
 - `DOMAIN=` in `.env` only seeds a fresh node; the domain changes through
@@ -65,11 +73,11 @@ see host-level ufw and fail2ban, hence the last two checks.
   down they say so and the change applies on its next start.
 - Re-running install.sh rewrites `.env` from flags — never use it to update.
 - fail2ban runs on the host, not in the container.
-- Host layer (ufw, the 20000:30000/udp redirect onto 443 for Hysteria2 port
-  hopping, fail2ban, time sync) lives in `deployments/host.sh`. It is
-  idempotent and resets ufw to the node rule set; re-run it on a live node
-  after changing it:
-  `curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/deployments/host.sh | sh`.
+- Host layer (ufw, the `$HOP/udp` redirect onto 443 for Hysteria2 port
+  hopping, `AWGPORT` for AmneziaWG, fail2ban, time sync) lives in
+  `deployments/host.sh`. It is idempotent and resets ufw to the node rule set;
+  re-run it on a live node after changing it or after changing ports:
+  `curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/deployments/host.sh | HOP=<from:to> AWGPORT=<port> sh`.
   Never install iptables-persistent: apt removes ufw for it.
 
 ## Breaking operations
@@ -79,6 +87,7 @@ explicit operator request:
 
 - `raw rotate-paths` — all transports, every link dies.
 - `raw change-domain` — new domain plus a fresh certificate.
+- `raw set-hop-ports` — new Hysteria2 UDP hop range (`from:to`), every issued `hy2://` link carries the old `mport=` range.
 - `raw set-awg-port` — new AmneziaWG UDP port, every issued wireguard:// link dies.
 - `raw del`, `raw rotate-sub` — one client.
 - Reality SNI change, MTProto FakeTLS mask change.

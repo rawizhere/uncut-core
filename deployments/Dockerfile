@@ -44,6 +44,30 @@ RUN git clone https://github.com/telegramdesktop/tproxy-server.git /tmp/tproxy-s
     && git checkout "${TPROXY_SERVER_COMMIT}" \
     && CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o /build/tproxy-server ./cmd/tproxy-server
 
+# Sing-Box Extended builder (pinned + local vless/service.go mux leak fix).
+# Keeping the patch in-image avoids silent OOM leaks on clean deploys and image upgrades;
+# `raw singbox-version <ver>` downloads unpatched upstream releases to the volume until --reset.
+FROM golang:1.27-alpine AS singbox-builder
+
+RUN apk add --no-cache git ca-certificates
+
+ARG SINGBOX_EXT_VERSION=1.14.3-extended-2.7.3
+ARG SINGVMESS_EXT_VERSION=v0.2.9-extended-1.0.0
+ARG SINGBOX_MUXFIX_REV=muxfix.1
+
+COPY patches/sing-vmess-muxfix.patch /tmp/sing-vmess-muxfix.patch
+RUN git clone --depth 1 --branch "${SINGVMESS_EXT_VERSION}" https://github.com/shtorm-7/sing-vmess.git /tmp/sing-vmess \
+    && git -C /tmp/sing-vmess apply /tmp/sing-vmess-muxfix.patch \
+    && git clone --depth 1 --branch "v${SINGBOX_EXT_VERSION}" https://github.com/shtorm-7/sing-box-extended.git /tmp/sing-box-extended \
+    && cd /tmp/sing-box-extended \
+    && go mod edit -replace github.com/sagernet/sing-vmess=/tmp/sing-vmess \
+    && mkdir -p /build \
+    && TAGS=$(tr ',' '\n' < release/DEFAULT_BUILD_TAGS_OTHERS | grep -vx 'with_admin_panel' | tr '\n' ',' | sed 's/^,//; s/,$//') \
+    && CGO_ENABLED=0 GOOS=linux \
+        go build -trimpath -tags "${TAGS}" \
+        -ldflags "-s -w -X 'github.com/sagernet/sing-box/constant.Version=${SINGBOX_EXT_VERSION}-${SINGBOX_MUXFIX_REV}' $(cat release/LDFLAGS)" \
+        -o /build/sing-box ./cmd/sing-box
+
 # Final Runtime Image based on Debian Slim
 FROM debian:bookworm-slim
 
@@ -77,16 +101,6 @@ RUN mkdir -p /etc/mtproxy \
     && curl -fsSL https://core.telegram.org/getProxySecret -o /etc/mtproxy/proxy-secret \
     && curl -fsSL https://core.telegram.org/getProxyConfig -o /etc/mtproxy/proxy-multi.conf
 
-# Install Sing-Box Extended release. Pinned on purpose: the fleet runs one
-# version and nodes are upgraded by hand, never by rebuilding against latest.
-ARG SINGBOX_EXT_VERSION=1.14.3-extended-2.7.3
-RUN ARCH=$(dpkg --print-architecture) \
-    && curl -fsSL "https://github.com/shtorm-7/sing-box-extended/releases/download/v${SINGBOX_EXT_VERSION}/sing-box-${SINGBOX_EXT_VERSION}-linux-${ARCH}.tar.gz" -o /tmp/sing-box.tar.gz \
-    && tar -xzf /tmp/sing-box.tar.gz -C /tmp \
-    && mv /tmp/sing-box-*/sing-box /usr/local/bin/sing-box \
-    && chmod +x /usr/local/bin/sing-box \
-    && rm -rf /tmp/sing-box*
-
 # Install CoreDNS for the private DoH endpoint (loopback only; nginx in
 # front). Pinned on purpose, same discipline as the sing-box pin.
 ARG COREDNS_VERSION=1.14.7
@@ -100,12 +114,13 @@ WORKDIR /app
 
 COPY --from=go-builder /build/raw /usr/local/bin/raw
 COPY --from=go-builder /build/tproxy-server /usr/local/bin/tproxy-server
+COPY --from=singbox-builder /build/sing-box /usr/local/bin/sing-box
 COPY --from=mtproxy-builder /build/mtproto-proxy /usr/local/bin/mtproto-proxy
 COPY deployments/start.sh /app/start.sh
 COPY deployments/logrotate.conf /etc/logrotate.d/uncut-nginx
 COPY deployments/Corefile /etc/coredns/Corefile
 
-RUN chmod +x /app/start.sh /usr/local/bin/raw /usr/local/bin/tproxy-server /usr/local/bin/mtproto-proxy \
+RUN chmod +x /app/start.sh /usr/local/bin/raw /usr/local/bin/tproxy-server /usr/local/bin/sing-box /usr/local/bin/mtproto-proxy \
     && rm -f /etc/nginx/sites-enabled/* /etc/nginx/sites-available/* /etc/nginx/conf.d/* /etc/nginx/http.d/* \
     && mkdir -p /opt/uncut/data/logs /opt/sing-box /etc/nginx/conf.d /var/www/cdn /etc/nginx/snippets /etc/mtproxy /srv/tproxy-site /var/www/html \
     && mkdir -p /etc/coredns
