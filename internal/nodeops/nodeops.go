@@ -33,6 +33,7 @@ type ClientView struct {
 	// Protocols mirrors the stored allowlist; explicit false means inherit.
 	Protocols         []string `json:"protocols,omitempty"`
 	ProtocolsExplicit bool     `json:"protocols_explicit,omitempty"`
+	Disabled          bool     `json:"disabled,omitempty"`
 }
 
 // NewClientView renders one client; the subscription URL comes from the transport.
@@ -44,6 +45,7 @@ func NewClientView(c config.Client, domain string, l *transport.Transport) Clien
 		Subscription:      l.SubURL(domain, c.SubHash),
 		Protocols:         c.Protocols,
 		ProtocolsExplicit: c.ProtocolsExplicit,
+		Disabled:          c.Disabled,
 	}
 }
 
@@ -173,6 +175,21 @@ func InheritClientProtocols(ctx context.Context, store *db.Store, opts setup.Opt
 		return nil, err
 	}
 	if _, err := core.InheritClientProtocols(store, client.UUID); err != nil {
+		return nil, err
+	}
+	if err := setup.Reload(ctx); err != nil {
+		return nil, fmt.Errorf("rebuild configs: %w", err)
+	}
+	return clientViewAfter(ctx, store, opts, client.UUID)
+}
+
+// SetClientDisabled disables or re-enables a client while preserving its UUID, AWG keys, and subscription token.
+func SetClientDisabled(ctx context.Context, store *db.Store, opts setup.Options, name string, disabled bool) (*ClientView, error) {
+	client, err := findClient(store, name)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := core.SetClientDisabled(store, client.UUID, disabled); err != nil {
 		return nil, err
 	}
 	if err := setup.Reload(ctx); err != nil {

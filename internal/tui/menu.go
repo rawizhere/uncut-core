@@ -217,7 +217,11 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 
 	options := make([]huh.Option[string], 0, len(clients))
 	for _, c := range clients {
-		options = append(options, huh.NewOption(c.Name, c.UUID))
+		label := c.Name
+		if c.Disabled {
+			label += " [disabled]"
+		}
+		options = append(options, huh.NewOption(label, c.UUID))
 	}
 
 	var selectedUUID string
@@ -231,23 +235,31 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 	}
 
 	for {
-		// Re-read every round: a protocol change below rewrites the client.
+		// Re-read every round: a protocol or state change below rewrites the client.
 		client, err := m.store.GetClientByUUID(selectedUUID)
 		if err != nil {
 			fmt.Printf("Client error: %v\n", err)
 			return
 		}
 
+		title := fmt.Sprintf("Client: %s", client.Name)
+		toggleLabel := "5. Disable Client"
+		if client.Disabled {
+			title += " [disabled]"
+			toggleLabel = "5. Enable Client"
+		}
+
 		var action string
 		form := huh.NewForm(
 			huh.NewGroup(
 				huh.NewSelect[string]().
-					Title(fmt.Sprintf("Client: %s", client.Name)).
+					Title(title).
 					Options(
 						huh.NewOption("1. View Subscription URL & QR", "sub"),
 						huh.NewOption("2. View Raw Outbound Links", "links"),
 						huh.NewOption("3. Edit Client Protocols", "protocols"),
 						huh.NewOption("4. Inherit Server Protocols", "inherit"),
+						huh.NewOption(toggleLabel, "toggle_disabled"),
 						huh.NewOption("0. Back", "back"),
 					).
 					Value(&action),
@@ -264,6 +276,10 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 			fmt.Printf("\nSubscription URL: %s\n", subURL)
 			printQR(subURL)
 		case "links":
+			if client.Disabled {
+				fmt.Printf("\nClient %s is disabled (no active outbound links).\n", client.Name)
+				break
+			}
 			s := m.loaded()
 			if s == nil {
 				fmt.Println("Failed to load settings.")
@@ -312,6 +328,17 @@ func (m *Menu) showClientDetails(ctx context.Context) {
 				break
 			}
 			fmt.Println("\nClient now inherits the server protocol set.")
+		case "toggle_disabled":
+			view, err := nodeops.SetClientDisabled(ctx, m.store, m.opts, client.UUID, !client.Disabled)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				break
+			}
+			if view.Disabled {
+				fmt.Printf("\nClient %s disabled.\n", view.Name)
+			} else {
+				fmt.Printf("\nClient %s enabled.\n", view.Name)
+			}
 		}
 	}
 }

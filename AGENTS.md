@@ -65,6 +65,9 @@ see host-level ufw and fail2ban, hence the last two checks.
 - Protocols: `raw set-protocols --protocols ...` (and TUI `6. Inbound Protocols`)
   toggles active server transports (for example, turning off `vless-ws` and
   `vless-grpc` without code changes).
+- Disable/enable client: `raw disable <name>` and `raw enable <name>` (and TUI
+  `Client Details`) turn a client off in `sing-box` and empty its subscription
+  while preserving its UUID, AWG keys and subscription URL.
 - Change node tag: edit `TAG=` in `deployments/.env`, recreate the container.
   Subscriptions regenerate on boot.
 - `DOMAIN=` in `.env` only seeds a fresh node; the domain changes through

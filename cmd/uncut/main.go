@@ -68,6 +68,8 @@ func main() {
 	rootCmd.AddCommand(daemonCmd())
 	rootCmd.AddCommand(menuCmd())
 	rootCmd.AddCommand(addClientCmd())
+	rootCmd.AddCommand(disableClientCmd())
+	rootCmd.AddCommand(enableClientCmd())
 	rootCmd.AddCommand(breaking(delClientCmd()))
 	rootCmd.AddCommand(listClientsCmd())
 	rootCmd.AddCommand(syncIPCmd())
@@ -296,6 +298,53 @@ func rotateSubCmd() *cobra.Command {
 	return cmd
 }
 
+func disableClientCmd() *cobra.Command {
+	return clientToggleCmd(
+		"disable <name|uuid>",
+		"Disable a client without deleting its keys or subscription token",
+		true,
+	)
+}
+
+func enableClientCmd() *cobra.Command {
+	return clientToggleCmd(
+		"enable <name|uuid>",
+		"Re-enable a disabled client",
+		false,
+	)
+}
+
+func clientToggleCmd(use, short string, disabled bool) *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, err := clientName(cmd, args)
+			if err != nil {
+				return err
+			}
+			view, err := nodeops.SetClientDisabled(cmd.Context(), store, opts, name, disabled)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return json.NewEncoder(os.Stdout).Encode(view)
+			}
+			state := "enabled"
+			if view.Disabled {
+				state = "disabled"
+			}
+			fmt.Printf("Client %s %s.\n", view.Name, state)
+			return nil
+		},
+	}
+	nameFlag(cmd)
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	return cmd
+}
+
 func delClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "del <name|uuid>",
@@ -340,7 +389,11 @@ func listClientsCmd() *cobra.Command {
 				if c.ProtocolsExplicit {
 					protos = strings.Join(c.Protocols, ", ")
 				}
-				fmt.Printf("• %s\n  UUID: %s\n  Protocols: %s\n  Subscription: %s\n", c.Name, c.UUID, protos, c.Subscription)
+				suffix := ""
+				if c.Disabled {
+					suffix = " [disabled]"
+				}
+				fmt.Printf("• %s%s\n  UUID: %s\n  Protocols: %s\n  Subscription: %s\n", c.Name, suffix, c.UUID, protos, c.Subscription)
 			}
 			return nil
 		},

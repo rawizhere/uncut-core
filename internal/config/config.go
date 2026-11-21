@@ -149,6 +149,9 @@ func ResolveProtocols(raw []string) []string {
 
 // EffectiveProtocols is the one rule for what a client gets: an explicit list is an allowlist (off stays off), anything else is its creation snapshot plus the server set; both cut to the server's active set. Client order first, then the server's, so subscriptions stay byte-stable.
 func EffectiveProtocols(c Client, serverRaw []string) []string {
+	if c.Disabled {
+		return nil
+	}
 	server := ResolveProtocols(serverRaw)
 	protos := c.Protocols
 	if !c.ProtocolsExplicit || len(protos) == 0 {
@@ -171,6 +174,7 @@ type Client struct {
 	// ProtocolsExplicit true: the list is an allowlist; false: a snapshot that inherits the server's set.
 	ProtocolsExplicit bool      `json:"protocols_explicit,omitempty"`
 	Protocols         []string  `json:"protocols"`
+	Disabled          bool      `json:"disabled,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 	// AWG is the AmneziaWG peer material; nil until the node's bootstrap backfills it.
 	AWG *ClientAWG `json:"awg,omitempty"`

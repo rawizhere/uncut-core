@@ -172,3 +172,17 @@ func InheritClientProtocols(store *db.Store, clientUUID string) (*config.Client,
 	slog.Info("Client protocols reset to inherit", "name", client.Name, "uuid", clientUUID)
 	return client, nil
 }
+
+// SetClientDisabled toggles whether the client is active without removing its UUID, keys, or subscription token.
+func SetClientDisabled(store *db.Store, clientUUID string, disabled bool) (*config.Client, error) {
+	client, err := store.GetClientByUUID(clientUUID)
+	if err != nil {
+		return nil, fmt.Errorf("client not found: %w", err)
+	}
+	client.Disabled = disabled
+	if err := store.AddClient(*client); err != nil {
+		return nil, fmt.Errorf("update client: %w", err)
+	}
+	slog.Info("Client state updated", "name", client.Name, "uuid", clientUUID, "disabled", disabled)
+	return client, nil
+}
