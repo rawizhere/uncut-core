@@ -28,7 +28,7 @@ const checkInterval = time.Hour
 
 var errNoCertificate = errors.New("no certificate")
 
-// Manager issues TLS certificates from Let's Encrypt over HTTP-01 (webroot) — the only CA. The ssl server renders only after the first certificate lands.
+// Manager issues TLS certificates from Let's Encrypt (the only supported CA) over HTTP-01 via webroot. The ssl server renders only after the first certificate lands.
 type Manager struct {
 	domain   string
 	email    string

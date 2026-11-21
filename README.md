@@ -7,29 +7,35 @@ self-renewing TLS.
 
 Handing this repository to an agent? Point it at AGENTS.md first.
 
-The node is the whole program. There is no control plane — state lives in one
-SQLite file on the box and everything is driven from `raw` on that box.
+State lives in one SQLite file on the host, and all configuration changes go
+through `raw` on that host.
 
 ## How it fits together
 
-The firewall opens `80`, `443/tcp`, `443/udp` and the AmneziaWG UDP port
-`45820` (plus SSH); everything else below is loopback-only:
+The firewall opens `80`, `443/tcp`, `443/udp`, the Hysteria2 UDP hop range
+(`$HOP/udp`, default `20000:30000`) redirected onto `443/udp`, and the
+AmneziaWG UDP port (`45820` by default) plus SSH. Every other listener stays
+on loopback:
 
 | Port | Owner | What |
 |------|-------|------|
 | 80/tcp | nginx | ACME HTTP-01 challenge; everything else `301` to https |
-| 443/tcp | nginx `stream` | split by TLS SNI |
+| 443/tcp | nginx `stream` | split by TLS SNI with `proxy_protocol` |
 | 443/udp | sing-box | Hysteria2 UDP relay; unauthenticated HTTP/3 probes get the same stock 404 as TCP (masquerade) |
 | 45820/udp | sing-box | AmneziaWG (wireguard) relay; the default port, change with `raw set-awg-port` |
-| 8443/tcp | sing-box | TLS relay inbound; reachable only through the 443 SNI split |
+| 8443/tcp | sing-box | VLESS Reality inbound; reachable through `127.0.0.1:18443` stripper from the 443 SNI split |
 
-nginx has to sit in front because sing-box cannot demultiplex one TCP port
-between several inbounds. The splitter routes the relay SNI to
-`127.0.0.1:8443` and everything else to `127.0.0.1:8442`, where the node's own
-domain is served and any other SNI is rejected with `ssl_reject_handshake on;`.
+nginx sits in front because sing-box cannot demultiplex one TCP port between
+several inbounds. The splitter routes the Reality SNI via the `127.0.0.1:18443`
+`proxy_protocol` stripper to `127.0.0.1:8443`, the optional MTProto FakeTLS
+mask domain via `127.0.0.1:12399` stripper to `127.0.0.1:2399`, and everything
+else to `127.0.0.1:8442`, where the node's own domain is served and any other
+SNI is rejected with `ssl_reject_handshake on;`.
 
-The relay inbounds behind nginx are loopback-only: 10001–10004
-(transports) and 8443 (TLS relay); CoreDNS (DoH) 3053.
+The remaining loopback listeners are `10001-10004` (VLESS transports), `8440`
+(non-proxy_protocol HTTPS fallback for self-SNI Reality), `8441` (Hysteria2
+masquerade 404), `2398` (plain `mtproto-proxy` backend for `tproxy-server` on
+`8080`), and `3053` (CoreDNS DoH).
 
 The node also serves a **private DoH endpoint** at
 `https://<domain><transport-random-path>/dns-query` (printed by `raw info`,
@@ -47,14 +53,14 @@ because obfs hides the HTTP layer entirely.
 
 ## Deploy
 
-One command deploys the whole node — installs docker if missing, fetches the
-repository, writes `.env` from the flags, starts compose and waits for the
+One command deploys the node: it installs Docker if missing, fetches the
+repository, writes `.env` from the flags, starts Compose, and waits for the
 process probe:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/rawizhere/uncut-core/main/deployments/install.sh \
   | sudo sh -s -- --domain node.example.com --email admin@example.com
-# optional: --tag de --tz Europe/Moscow
+# optional: --bandwidth 500 --tag de --tz Europe/Moscow --ref main --image <image> --dir /opt/uncut
 ```
 
 Manual path, when you want to read every step:
@@ -65,10 +71,9 @@ $EDITOR deployments/.env          # DOMAIN and EMAIL are the only required value
 docker compose -f deployments/docker-compose.yml up -d
 ```
 
-`DOMAIN` must already have an A record pointing at the host, DNS-only — a
-Cloudflare-proxied record breaks the transports. Ports 80, 443/tcp and
-443/udp have to be reachable from the internet for the certificate and the
-transports.
+`DOMAIN` must already have a DNS-only A record pointing at the host. A
+Cloudflare-proxied record breaks the transports. Ports 80, 443/tcp, and 443/udp
+must be reachable from the internet for the certificate and the transports.
 
 On first boot the node generates its relay keys, relay credentials, random
 transport paths and proxy secrets, and seeds a client named `admin` (set
@@ -77,11 +82,11 @@ transport paths and proxy secrets, and seeds a client named `admin` (set
 ## Certificates
 
 Issuance runs in the daemon and renews 30 days before expiry. Let's Encrypt is
-the only CA; the challenge is HTTP-01, so port 80 must stay open. On a first
-boot the nginx render leaves the ssl server out, and the sing-box render the
+the only CA; the challenge is HTTP-01, so port 80 must stay open. On first
+boot the nginx render omits the ssl server, and the sing-box render omits the
 UDP relay, until the first certificate lands (HTTP-01 needs nginx up; both
-need the cert) — the TLS relay needs no certificate and works meanwhile. To bring your own certificate instead — a
-wildcard, or a private CA — install it directly:
+need the cert). The TLS relay needs no certificate and works meanwhile. To
+install a wildcard or private CA certificate instead:
 
 ```bash
 raw set-cert --cert-base64 "$(base64 -w0 fullchain.pem)" \
@@ -92,24 +97,39 @@ raw renew-cert        # force a renewal now
 ## Commands
 
 ```bash
-raw menu              # interactive administration menu
-raw daemon            # the supervisor: sing-box, nginx, tproxy; the only writer of configs
-raw add phone         # add a client, prints its subscription URL
-raw list              # clients with subscription URLs
-raw del phone --yes   # remove a client and its subscription file
+raw menu                    # interactive administration menu
+raw daemon                  # the supervisor: sing-box, nginx, mtproto-proxy, tproxy, coredns
+raw version                 # print the binary version
+raw add phone               # add a client, prints its subscription URL
+raw list                    # clients with subscription URLs and disabled markers
+raw disable phone           # turn a client off without losing UUID, AWG keys or sub token
+raw enable phone            # re-enable a disabled client
+raw del phone --yes         # remove a client and its subscription file
 raw rotate-sub phone --yes  # new subscription token for one client; the old URL dies
-raw info              # version, tag, DoH endpoint, transport revision, cert expiry
-raw doctor            # health checks: daemon, configs, dns, ports, cert, transports, tg bridge, subscriptions
+raw set-protocols --protocols ...             # set active server transports
+raw set-client-protocols phone --protocols ... # explicit per-client allowlist (or --inherit)
+raw set-sni example.com --yes                 # set Reality SNI
+raw set-mtproto-tls --domain mask.com --yes   # set or clear MTProto FakeTLS mask
+raw set-obfs <pass> --yes                     # set Hysteria2 salamander obfs (--clear drops it)
+raw set-hop-ports 30000:40000 --yes           # set Hysteria2 UDP hop range (--default resets)
+raw set-awg-port 51820 --yes                  # new AmneziaWG UDP port; issued wireguard:// links die
+raw hysteria2-bandwidth --up 500 --down 500   # set brutal caps (0 = BBR)
+raw singbox-version <ver>                     # install upstream release (--reset restores image muxfix)
+raw info                    # version, tag, DoH endpoint, transport revision, cert expiry
+raw doctor                  # health checks: daemon, configs, dns, ports, cert, transports, tg bridge, subscriptions
 raw rotate-paths --yes      # re-generate random paths; re-issue subscriptions
-raw change-domain node2.example.com --yes   # new domain + a fresh certificate
-raw set-awg-port 51820 --yes  # new AmneziaWG UDP port; every issued wireguard:// link dies
-raw sync-ip [--force <ip>]                  # pin the detected public IP
+raw change-domain node2.example.com --yes     # new domain + a fresh certificate
+raw sync-ip [--force <ip>]                    # pin the detected public IP
+raw backup                  # snapshot SQLite store to --data-dir/backup_<ts>.db
+raw restore <file> --yes    # restore SQLite store from backup and rebuild
 ```
 
-Every command takes `--data-dir` and `--install-dir`; `info`, `list`, `add`
-and `doctor` also take `--json`. Commands that kill issued client links
-(`del`, `rotate-sub`, `rotate-paths`, `change-domain`, `set-sni`,
-`set-mtproto-tls`, `set-awg-port`) refuse to run without `--yes`.
+Every command takes `--data-dir` and `--install-dir`; `info`, `list`, `add`,
+`disable`, `enable`, `set-protocols`, `set-client-protocols`, `backup`, and
+`doctor` also take `--json`. Commands that kill or overwrite issued client
+links/state (`del`, `rotate-sub`, `rotate-paths`, `change-domain`, `set-sni`,
+`set-mtproto-tls`, `set-obfs`, `set-hop-ports`, `set-awg-port`, `restore`)
+refuse to run without `--yes`.
 
 Commands only change the SQLite store and ask the daemon (`POST
 127.0.0.1:8088/reload`) to re-render. The daemon checks each config with its
@@ -125,8 +145,8 @@ be re-issued.
 
 The node runs a Telegram proxy and a tdesktop-web-proxy bridge behind it. The
 bridge page is served at `/?bridge=<capability>`, where the capability is
-HMAC-SHA256 over the domain keyed with the node's `webproxy_secret` — so the
-page is unreachable without the secret, and nginx never logs that request. The
+HMAC-SHA256 over the domain keyed with the node's `webproxy_secret`, so the
+page is unreachable without the secret and nginx never logs that request. The
 optional FakeTLS branch (`raw set-mtproto-tls`) is sing-box's `mtproxy` inbound
 with its own `mtproto_raw_secret`, so the two links never share a key. `raw info`
 prints both links.

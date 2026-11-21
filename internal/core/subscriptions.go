@@ -15,7 +15,7 @@ import (
 	"github.com/rawizhere/uncut-core/internal/db"
 )
 
-// linkLabel builds the visible entry name: name-protocol[-tag]. Lives only in the URL fragment — clients never send it to the server.
+// linkLabel builds the visible entry name: name-protocol[-tag]. It lives only in the URL fragment, so clients never send it to the server.
 func linkLabel(name, proto, tag string) string {
 	label := fmt.Sprintf("%s-%s", name, proto)
 	if IsValidTag(tag) {

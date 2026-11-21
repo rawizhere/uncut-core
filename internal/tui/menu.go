@@ -461,7 +461,7 @@ func (m *Menu) changeRealitySNI(ctx context.Context) {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	fmt.Printf("\nReality SNI updated: %s — transport rev %s, every client link must be re-issued\n\n", strings.TrimSpace(newSNI), rev)
+	fmt.Printf("\nReality SNI updated: %s (transport rev %s). Re-issue every client link.\n\n", strings.TrimSpace(newSNI), rev)
 }
 
 func (m *Menu) rotatePaths(ctx context.Context) {
@@ -482,7 +482,7 @@ func (m *Menu) rotatePaths(ctx context.Context) {
 		fmt.Printf("Error: %v\n", err)
 		return
 	}
-	fmt.Printf("\nTransport paths rotated, rev %s — every issued client link must be re-issued\n\n", rev)
+	fmt.Printf("\nTransport paths rotated, rev %s. Re-issue every issued client link.\n\n", rev)
 }
 
 func (m *Menu) runSpeedtest(ctx context.Context) {

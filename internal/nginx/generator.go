@@ -59,7 +59,7 @@ func Files(opts GeneratorOptions) (map[string][]byte, error) {
 	}, nil
 }
 
-// GenerateStreamConfig splits TCP 443 by SNI: reality → 18443 (stripper) → 8443, FakeTLS → 12399 (stripper) → 2399, else → 8442 (with proxy_protocol). A tls domain equal to the reality SNI is an error.
+// GenerateStreamConfig splits TCP 443 by SNI: reality goes to 18443 (stripper) then 8443, FakeTLS goes to 12399 (stripper) then 2399, and everything else goes to 8442 (with proxy_protocol). A tls domain equal to the reality SNI is an error.
 func GenerateStreamConfig(opts GeneratorOptions) (string, error) {
 	sni := strings.ToLower(strings.TrimSpace(opts.RealityServerName))
 	tlsDomain := strings.ToLower(strings.TrimSpace(opts.MTProtoTLSDomain))
@@ -119,7 +119,7 @@ func GenerateServerConfig(opts GeneratorOptions) string {
 		active[p] = true
 	}
 
-	// HTTP-01 needs nginx up, but the ssl server needs a cert — render 443 only once the files exist; Maintain re-renders after issuance.
+	// HTTP-01 needs nginx up, but the ssl server needs a cert. Render 443 only once the files exist; Maintain re-renders after issuance.
 	certful := true
 	for _, ext := range []string{".crt", ".key"} {
 		if _, err := os.Stat(filepath.Join(opts.InstallDir, "certs", "certificates", opts.Domain+ext)); err != nil {

@@ -95,7 +95,7 @@ func amneziaWGEndpoint(settings config.Settings, clients []config.Client) map[st
 	}
 }
 
-// allowedUsers renders every client whose effective set holds proto — the same rule the subscription links follow.
+// allowedUsers renders every client whose effective set holds proto, matching the rule subscription links follow.
 func allowedUsers(clients []config.Client, server []string, proto string, user func(config.Client) map[string]string) []map[string]string {
 	out := make([]map[string]string, 0)
 	for _, c := range clients {

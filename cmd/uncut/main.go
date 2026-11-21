@@ -88,6 +88,8 @@ func main() {
 	rootCmd.AddCommand(breaking(setObfsCmd()))
 	rootCmd.AddCommand(breaking(setHopPortsCmd()))
 	rootCmd.AddCommand(breaking(setAwgPortCmd()))
+	rootCmd.AddCommand(backupCmd())
+	rootCmd.AddCommand(breaking(restoreCmd()))
 
 	err := rootCmd.Execute()
 	// Closed here, not in a post-run: cobra skips post-runs when RunE fails.
@@ -721,7 +723,7 @@ func rotatePathsCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Transport paths rotated, rev %s — every issued client link must be re-issued\n", rev)
+			fmt.Printf("Transport paths rotated, rev %s. Re-issue every issued client link.\n", rev)
 			return nil
 		},
 	}
@@ -814,7 +816,7 @@ func setSNICmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Reality SNI: %s — transport rev %s\nSubscriptions are regenerated; every issued client link must be re-issued\n", strings.ToLower(strings.TrimSpace(host)), rev)
+			fmt.Printf("Reality SNI: %s (transport rev %s)\nSubscriptions are regenerated; re-issue every issued client link.\n", strings.ToLower(strings.TrimSpace(host)), rev)
 			return nil
 		},
 	}
@@ -866,4 +868,40 @@ func setCertCmd() *cobra.Command {
 	cmd.Flags().StringVar(&certB64, "cert-base64", "", "base64-encoded certificate PEM")
 	cmd.Flags().StringVar(&keyB64, "key-base64", "", "base64-encoded private key PEM")
 	return cmd
+}
+
+func backupCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "backup",
+		Short: "Snapshot the node database to backup_<timestamp>.db in the data directory",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			file, err := nodeops.ExportBackup(store, opts)
+			if err != nil {
+				return err
+			}
+			if asJSON {
+				return json.NewEncoder(os.Stdout).Encode(map[string]string{"file": file})
+			}
+			fmt.Printf("Backup created: %s\n", file)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "machine-readable output")
+	return cmd
+}
+
+func restoreCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "restore <file>",
+		Short: "Restore the node database from a backup file and rebuild configs",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := nodeops.ImportBackup(cmd.Context(), store, opts, args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("Backup restored from %s and configs rebuilt.\n", args[0])
+			return nil
+		},
+	}
 }

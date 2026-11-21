@@ -213,7 +213,7 @@ func SaveTransport(store *db.Store, t *transport.Transport) error {
 	return store.SetSetting("transport", string(data))
 }
 
-// RebuildAll renders every config, checks it with its own consumer before it lands, and reloads the running children; a nil sup renders only (the daemon's first pass, before anything runs). Only the daemon calls it — commands go through Reload.
+// RebuildAll renders every config, checks it with its own consumer before it lands, and reloads the running children; a nil sup renders only (the daemon's first pass, before anything runs). Only the daemon calls it, while commands go through Reload.
 func RebuildAll(ctx context.Context, store *db.Store, sup *supervisor.Supervisor, opts Options) error {
 	settings, err := Load(store, opts)
 	if err != nil {

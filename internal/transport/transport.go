@@ -72,7 +72,7 @@ func (t *Transport) DoHPath() string {
 	return strings.TrimSuffix(prefix, "/") + "/dns-query"
 }
 
-// Rev fingerprints paths + gRPC + SNI — exactly the fields inside client links.
+// Rev fingerprints paths, gRPC service name, and SNI, covering every field inside client links.
 func (t *Transport) Rev() string {
 	parts := []string{t.XHTTP, t.WS, t.Upgrade, t.Sub, t.GRPC, t.RealityServerName}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
