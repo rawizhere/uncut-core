@@ -29,11 +29,13 @@ type ProcessSpec struct {
 }
 
 type ManagedProcess struct {
-	Spec    ProcessSpec
-	Cmd     *exec.Cmd
-	Running bool
-	Started time.Time
-	Backoff time.Duration
+	Spec       ProcessSpec
+	Cmd        *exec.Cmd
+	Running    bool
+	restarting bool
+	done       chan struct{}
+	Started    time.Time
+	Backoff    time.Duration
 	// ProbeFails: consecutive failed liveness probes; at 3 the process is killed so the monitor restarts it.
 	ProbeFails int
 }
@@ -114,8 +116,10 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 		return
 	}
 
+	done := make(chan struct{})
 	mp.Cmd = cmd
 	mp.Running = true
+	mp.done = done
 	mp.ProbeFails = 0
 	mp.Started = time.Now()
 	slog.Info("Started managed process", "process", name, "pid", cmd.Process.Pid)
@@ -129,7 +133,9 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 		}
 		s.mu.Lock()
 		proc.Running = false
-		stopped := s.ctx.Err() != nil
+		close(done)
+		restarting := proc.restarting
+		stopped := s.ctx.Err() != nil || restarting
 		if time.Since(proc.Started) > 30*time.Second {
 			proc.Backoff = 0
 		}
@@ -141,7 +147,9 @@ func (s *Supervisor) startProcess(name string, mp *ManagedProcess) {
 		s.mu.Unlock()
 
 		if stopped {
-			slog.Info("Managed process stopped", "process", n)
+			if !restarting {
+				slog.Info("Managed process stopped", "process", n)
+			}
 			return
 		}
 
@@ -199,26 +207,32 @@ func (s *Supervisor) RestartProcess(name string) error {
 		return fmt.Errorf("process %s not registered", name)
 	}
 
+	mp.restarting = true
+	done := mp.done
+	var proc *os.Process
 	if mp.Running && mp.Cmd != nil && mp.Cmd.Process != nil {
-		slog.Info("Restarting process", "process", name, "pid", mp.Cmd.Process.Pid)
-		_ = mp.Cmd.Process.Signal(syscall.SIGTERM)
+		proc = mp.Cmd.Process
+		slog.Info("Restarting process", "process", name, "pid", proc.Pid)
+		_ = proc.Signal(syscall.SIGTERM)
 	}
 	s.mu.Unlock()
 
-	// Wait for the monitor goroutine to reap the old process instead of a blind sleep: starting earlier races the monitor's own restart.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		s.mu.Lock()
-		running := mp.Running
-		s.mu.Unlock()
-		if !running || time.Now().After(deadline) {
-			break
+	// Wait on the monitor's done channel rather than polling mp.Running (polling raced an immediate crash-restart); SIGKILL if graceful stop hangs.
+	if proc != nil && done != nil {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			_ = proc.Kill()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+			}
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	mp.restarting = false
 	if mp.Running {
 		return fmt.Errorf("process %s did not exit", name)
 	}

@@ -53,6 +53,18 @@ fi
 # The compose bind volumes need the device dirs before the first up.
 mkdir -p "$DIR/data" "$DIR/install"
 
+if ! command -v git >/dev/null 2>&1; then
+	if command -v apt-get >/dev/null 2>&1; then
+		echo "==> installing git"
+		export DEBIAN_FRONTEND=noninteractive
+		apt-get update -qq >/dev/null
+		apt-get install -y -qq git >/dev/null
+	else
+		echo "git missing; install git first" >&2
+		exit 1
+	fi
+fi
+
 # Fetch the repository that carries the compose file and the build context.
 SRC="$DIR/uncut-core"
 if [ -d "$SRC/.git" ]; then
